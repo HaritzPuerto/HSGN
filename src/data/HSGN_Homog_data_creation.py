@@ -622,7 +622,7 @@ list_graphs[1]
 
 # %%
 dev_dataset = Dataset(hotpot_dev, list_hotpot_dev_ner, dict_ins_doc_sent_srl_triples_dev, 1)
-list_graphs, list_g_metadata, list_context, list_span_idx = dev_dataset.create_dataloader()
+list_graphs, list_context, list_span_idx = dev_dataset.create_dataloader()
 list_input_ids = [context['input_ids'] for context in list_context]
 list_token_type_ids = [context['token_type_ids'] for context in list_context]
 list_attention_masks = [context['attention_mask'] for context in list_context]
@@ -632,18 +632,16 @@ tensor_attention_masks = torch.tensor(list_attention_masks)
 
 # %%
 dev_path = "/workspace/ml-workspace/thesis_git/thesis/data/processed/dev/homog_20200804/"
-training_path = "/workspace/ml-workspace/thesis_git/thesis/data/processed/training/homog_20200804/"
 
 for i, g in enumerate(tqdm(list_graphs)):
-    with open( dev_path + "graphs/graph"+str(i)+".bin", "wb" ) as f:
-        pickle.dump(g, f)
-    with open( dev_path + "metadata/metadata"+str(i)+".bin", "wb" ) as f:
-        pickle.dump(list_g_metadata[i], f)
-    # separate the metadata from the graph to store it (do not add metadata in the first place)
+    with open( os.path.join(dev_path, "graphs/", "graph"+str(i)+".bin"), "wb" ) as f:
+        pickle.dump(g, f)   
 print("Saving tensors")
-torch.save(tensor_input_ids, '/workspace/ml-workspace/datasets/hotpotqa/dev/hetero_hsgn/tensor_input_ids.p')
-torch.save(tensor_token_type_ids, '/workspace/ml-workspace/datasets/hotpotqa/dev/hetero_hsgn/tensor_token_type_ids.p')
-torch.save(tensor_attention_masks, '/workspace/ml-workspace/datasets/hotpotqa/dev/hetero_hsgn/tensor_attention_masks.p')
+torch.save(tensor_input_ids, os.path.join(dev_path, 'tensor_input_ids.p'))
+torch.save(tensor_token_type_ids, os.path.join(dev_path, 'tensor_token_type_ids.p'))
+torch.save(tensor_attention_masks, os.path.join(dev_path, 'tensor_attention_masks.p'))
 print("Saving list span idx")
-with open('/workspace/ml-workspace/datasets/hotpotqa/dev/hetero_hsgn/list_span_idx.p', 'wb') as f:
+with open(os.path.join(dev_path, 'list_span_idx.p'), 'wb') as f:
     pickle.dump(list_span_idx, f)
+
+# %%
