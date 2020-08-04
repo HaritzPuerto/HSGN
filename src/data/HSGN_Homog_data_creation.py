@@ -606,14 +606,14 @@ tensor_token_type_ids = torch.tensor(list_token_type_ids)
 tensor_attention_masks = torch.tensor(list_attention_masks)
 
 training_path = "/workspace/ml-workspace/thesis_git/thesis/data/processed/training/homog_20200804/"
-for i, g in enumerate(list_graphs):
+for i, g in enumerate(tqdm(list_graphs)):
     with open( training_path + "graphs/graph"+str(i)+".bin", "wb" ) as f:
         pickle.dump(g, f)
-
+print("Saving tensors")
 torch.save(tensor_input_ids, training_path + 'tensor_input_ids.p')
 torch.save(tensor_token_type_ids, training_path + 'tensor_token_type_ids.p')
 torch.save(tensor_attention_masks, training_path + 'tensor_attention_masks.p')
-
+print("Saving list span idx")
 with open(training_path + 'list_span_idx.p', 'wb') as f:
     pickle.dump(list_span_idx, f)
 
