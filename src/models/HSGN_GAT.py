@@ -12,7 +12,7 @@ import os
 
 data_path = "/workspace/ml-workspace/thesis_git/thesis/data/"
 hotpot_qa_path = os.path.join(data_path, "external")
-graphs_path = "processed/training/homog_20200804/"
+graphs_path = "processed/training/homog_20200805/"
 
 with open(os.path.join(hotpot_qa_path, "hotpot_train_v1.1.json"), "r") as f:
     hotpot_train = json.load(f)
@@ -114,8 +114,8 @@ def graph_for_training(graph):
 # %%
 
 data_path = "/workspace/ml-workspace/thesis_git/thesis/data/"
-training_path = os.path.join(data_path, "processed/training/homog_20200804/")
-dev_path = os.path.join(data_path, "processed/dev/homog_20200804/")
+training_path = os.path.join(data_path, "processed/training/homog_20200805/")
+dev_path = os.path.join(data_path, "processed/dev/homog_20200805/")
 
 with open(os.path.join(training_path, 'list_span_idx.p'), 'rb') as f:
     list_span_idx = pickle.load(f)
