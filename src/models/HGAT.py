@@ -244,19 +244,19 @@ class HeteroRGCNLayer(nn.Module):
     def __init__(self, in_size, out_size, etypes, feat_drop = 0., attn_drop = 0., residual = False):
         super(HeteroRGCNLayer, self).__init__()
         # W_r for each relation
-        #self.tok_trans =  nn.Linear(in_size, out_size)
-        self.tok_att =  nn.Linear(2*in_size, out_size)
-        
+        self.tok_trans = nn.Linear(in_size, out_size)
+        self.tok_att = nn.Linear(2 * in_size, out_size)
+
         self.node_trans = nn.Linear(in_size, out_size)
-        self.node_att = nn.Linear(2*in_size, out_size)
+        self.node_att = nn.Linear(2 * in_size, out_size)
 
         self.feat_drop = nn.Dropout(feat_drop)
         self.attn_drop = nn.Dropout(attn_drop)
-        
+
         self.residual = residual
-        
+
         self.reset_parameters()
-        
+
     def message_func(self, key, edges):
         return {'m': edges.src[key], 'e': edges.data['e']}
 
@@ -275,7 +275,7 @@ class HeteroRGCNLayer(nn.Module):
             # Compute W_r * h
             Wh = None
             if "2tok" in etype:
-                Wh = self.node_trans(self.feat_drop(feat_dict[srctype]))
+                Wh = self.tok_trans(self.feat_drop(feat_dict[srctype]))
                 G.nodes[srctype].data['z2tok'] = Wh
                 funcs[etype] = (lambda x : self.message_func('z2tok', x), self.reduce_func)
             else:
@@ -283,13 +283,11 @@ class HeteroRGCNLayer(nn.Module):
                 G.nodes[srctype].data['z'] = Wh
                 funcs[etype] = (lambda x : self.message_func('z', x), self.reduce_func)
             # Save it in graph for message passing
-            
             # Specify per-relation message passing functions: (message_func, reduce_func).
             # Note that the results are saved to the same destination feature 'h', which
             # hints the type wise reducer for aggregation.
             #funcs[etype] = (fn.copy_u('Wh_%s' % etype, 'm'), fn.mean('m', 'h'))
-            
-        
+
         for srctype, etype, dsttype in G.canonical_etypes:
             if "2tok" in etype:
                 G.apply_edges(lambda edges: {'e': F.leaky_relu(self.tok_att(torch.cat([edges.src['z2tok'],
@@ -317,11 +315,13 @@ class HeteroRGCNLayer(nn.Module):
             out = {ntype : G.nodes[ntype].data['h'] for ntype in G.ntypes}
         # return the updated node feature dictionary
         return out
-    
+   
     def reset_parameters(self):
         """Reinitialize learnable parameters."""
         gain = nn.init.calculate_gain('relu')
         nn.init.xavier_normal_(self.node_trans.weight, gain=gain)
+        nn.init.xavier_normal_(self.tok_trans.weight, gain=gain)
+        nn.init.xavier_normal_(self.tok_att.weight, gain=gain)
         nn.init.xavier_normal_(self.node_att.weight, gain=gain)
 
 
@@ -1157,9 +1157,9 @@ model_path = '/workspace/ml-workspace/thesis_git/HSGN/models'
 best_eval_f1 = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="HGAT", params=PARAMS, upload_source_files=['HGST.py']):
-    neptune.append_tag(["residual", "heterogenous", "wo_yn"])
-    neptune.set_property('server', 'IRGPU5')
+with neptune.create_experiment(name="HGAT", params=PARAMS, upload_source_files=['HGAT.py']):
+    neptune.append_tag(["HGAT", "2_att", "residual", "heterogenous", "wo_yn"])
+    neptune.set_property('server', 'IRGPU2')
     neptune.set_property('training_set_path', training_path)
     neptune.set_property('dev_set_path', dev_path)
 
