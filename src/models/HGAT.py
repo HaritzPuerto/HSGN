@@ -1286,6 +1286,13 @@ with neptune.create_experiment(name="Relational_HGAT", params=PARAMS, upload_sou
             scheduler.step()
             total_train_loss += total_loss.detach().item()
 
+            # free-up gpu memory
+            input_ids = input_ids.to('cpu')
+            attention_mask = attention_mask.to('cpu')
+            token_type_ids = token_type_ids.to('cpu')
+            start_positions = start_positions.to('cpu')
+            end_positions = end_positions.to('cpu')
+            
         # Calculate the average loss over all of the batches.
         avg_train_loss = total_train_loss / len(train_dataloader)            
         
