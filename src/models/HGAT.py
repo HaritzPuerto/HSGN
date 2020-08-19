@@ -106,7 +106,7 @@ list_metadata_files = natural_sort([f for f in listdir(training_metadata_path) i
 list_graph_metadata_files = list(zip(list_graph_files, list_metadata_files))
 
 list_graphs = []
-for (g_file, metadata_file) in tqdm(list_graph_metadata_files):
+for (g_file, metadata_file) in tqdm(list_graph_metadata_files[0:1000]):
     if ".bin" in g_file:
         with open(os.path.join(training_graphs_path, g_file), "rb") as f:
             graph = pickle.load(f)
@@ -433,7 +433,7 @@ class HGNModel(BertPreTrainedModel):
         
         # span prediction
         self.num_labels = config.num_labels
-        self.qa_outputs = nn.Linear(config.hidden_size, config.num_labels)
+        self.qa_outputs = nn.Linear(config.hidden_size*3, config.num_labels)
 
         # ans type prediction
         self.dropout_ans_type = nn.Dropout(config.hidden_dropout_prob)
@@ -478,10 +478,12 @@ class HGNModel(BertPreTrainedModel):
         graph_out, graph_emb = self.graph_forward(graph, sequence_output, train)
         # clean gpu mem
         
-        sequence_output = graph_emb['tok'].unsqueeze(0)
+        #sequence_output = graph_emb['tok'].unsqueeze(0)
+        
         # add graph info to the bert token embeddings
         #sequence_output = self.update_sequence_outputs(sequence_output, graph, graph_emb)
-
+        sequence_output = self.concat_tok_ent_srl(graph_emb['tok'], graph, graph_emb)
+        sequence_output = sequence_output.unsqueeze(0)
         # span prediction
         span_loss = None
         start_logits = None
@@ -517,6 +519,24 @@ class HGNModel(BertPreTrainedModel):
                 'srl': graph_out['srl'],
                 #'ans_type': graph_out['ans_type'],
                 'span': {'loss': span_loss, 'start_logits': start_logits, 'end_logits': end_logits}}  
+    
+    def concat_tok_ent_srl(self, bert_emb, g, graph_emb):
+        new_seq_emb = []
+        for i, tok_node in enumerate(g.nodes('tok')):
+            (srl_node, _) = g.in_edges(tok_node, etype='srl2tok')
+            # returns (tensor [], tensor [])
+            srl_emb = torch.zeros((768), device=device)
+            if len(srl_node) != 0:
+                srl_node = srl_node[0]
+                srl_emb = graph_emb['srl'][srl_node]
+            (ent_node, _) = g.in_edges(tok_node, etype='ent2tok')
+            # returns (tensor [], tensor [])
+            ent_emb = torch.zeros((768), device=device)
+            if len(ent_node) != 0:
+                ent_node = ent_node[0]
+                ent_emb =  graph_emb['ent'][ent_node]
+            new_seq_emb.append(torch.cat((bert_emb[i], srl_emb, ent_emb), dim=0))
+        return torch.stack(new_seq_emb)
     
     def graph_forward(self, graph, bert_context_emb, train):
         # create graph initial embedding #
@@ -1197,7 +1217,7 @@ best_eval_f1 = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
 with neptune.create_experiment(name="Relational_HGAT", params=PARAMS, upload_source_files=['HGAT.py']):
-    neptune.append_tag(["Relations", "residual", "heterogenous", "wo_yn",])
+    neptune.append_tag(["Relations", "residual", "heterogenous", "wo_yn", "concat_tok_ent_srl", "test"])
     neptune.set_property('server', 'IRGPU2')
     neptune.set_property('training_set_path', training_path)
     neptune.set_property('dev_set_path', dev_path)
