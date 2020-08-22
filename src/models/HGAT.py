@@ -106,7 +106,7 @@ list_metadata_files = natural_sort([f for f in listdir(training_metadata_path) i
 list_graph_metadata_files = list(zip(list_graph_files, list_metadata_files))
 
 list_graphs = []
-for (g_file, metadata_file) in tqdm(list_graph_metadata_files[0:10000]):
+for (g_file, metadata_file) in tqdm(list_graph_metadata_files[0:100]):
     if ".bin" in g_file:
         with open(os.path.join(training_graphs_path, g_file), "rb") as f:
             graph = pickle.load(f)
@@ -244,7 +244,7 @@ class HeteroRGCNLayer(nn.Module):
         self.tok_att = nn.Linear(2 * in_size, out_size)
 
         self.rel_trans = nn.Linear(2 * in_size, out_size)
-        self.rel_att = nn.Linear(2 * in_size, out_size)
+        # self.rel_att = nn.Linear(2 * in_size, out_size)
 
         self.node_trans = nn.Linear(in_size, out_size)
         self.node_att = nn.Linear(2 * in_size, out_size)
@@ -252,6 +252,7 @@ class HeteroRGCNLayer(nn.Module):
         self.feat_drop = nn.Dropout(feat_drop)
         self.attn_drop = nn.Dropout(attn_drop)
 
+        # self.common_space = nn.Linear(in_size, out_size)
         self.residual = residual
 
         self.reset_parameters()
@@ -269,18 +270,18 @@ class HeteroRGCNLayer(nn.Module):
             rel_emb.append(edges.data['rel_type'][i] * torch.mean(bert_token_emb[x:y], dim=0))
         rel_emb = torch.stack(rel_emb, dim=0)
         assert not torch.isnan(rel_emb).any()
-        
-        neighbors = edges.src['h']
-        m = self.rel_trans(torch.cat((neighbors, rel_emb), dim=1))
+#         return {'rel': rel_emb, 'srl': edges.src['h']}
+        src = edges.src['h']
+        m = self.node_trans(self.rel_trans(torch.cat((src, rel_emb), dim=1)))
         # m: [num srl x 768]
-        updt_self_node = self.node_trans(edges.dst['h'])
-        cat_uv = torch.cat([rel_emb,
-                            updt_self_node],
+        dst = self.node_trans(edges.dst['h'])
+        cat_uv = torch.cat([m,
+                            dst],
                            dim=1)
         e = F.leaky_relu(self.node_att(cat_uv))
         return {'m': m, 'e': e}
 
-    def reduce_func_srl(self, nodes):
+    def reduce_func(self, nodes):
         '''
         h_srl = sum_j(h_j) + h_srl # w/o transformation for h_srl for now
         
@@ -288,21 +289,48 @@ class HeteroRGCNLayer(nn.Module):
         alpha = self.attn_drop(F.softmax(nodes.mailbox['e'], dim=1))
         h = torch.sum(alpha * nodes.mailbox['m'], dim=1)
         return {'h': h}
+        ########################
+#         h = nodes.mailbox['h']
+#         h_upd = self.node_trans(h)
+#         self_node = nodes.data['h'] #already included in h because of self edge
+#         print(nodes)
+#         if 'srl' in nodes.mailbox:
+#             srl = nodes.mailbox['srl']
+#             rel_emb = nodes.mailbox['rel']
+#             srl_rel = self.rel_trans(torch.cat((srl, rel_emb), dim=1))
+#             # srl_rel: [num srl x 768]
+#             neighbors = torch.stack((srl_rel, h_upd), dim=0)
+#         else:
+#             neighbors = h_upd
+#         neighbors_common_space = self.common_space(neighbors)
+#         self_node_upd = self.common_space(self.node_trans(self_node))
+#         list_cat = []
+#         for v in neighbors_common_space:
+#             print(v.shape)
+#             print(self_node_upd.shape)
+#             #torch.Size([1, 768])
+#             #torch.Size([7, 768])
+#             list_cat.append(torch.cat([v, self_node_upd], dim=1))
+#         cat_uv = torch.stack(list_cat, dim=0)
+#         e = F.leaky_relu(self.node_att(cat_uv))
+#         alpha = self.attn_drop(F.softmax(e, dim=1))
+#         h = torch.sum(alpha * neighbors_common_space, dim=1)
+#         return {'h': h}
     
-    def message_func_2_tok(self, edges):
+    def message_func_2tok(self, edges):
         '''
         e_ij = LeakyReLU(W * (Wh_j || Wh_i))
         '''
-        neighbors = edges.src['h']
-        updt_neighbors = self.tok_trans(neighbors)
-        updt_self_node = self.node_trans(edges.dst['h'])
-        cat_uv = torch.cat([updt_neighbors,
-                            updt_self_node],
+        src = edges.src['h']
+        updt_src = self.tok_trans(src) # doc, sent, srl, entity nodes
+        updt_dst = self.tok_trans(edges.dst['h']) # the token node
+        cat_uv = torch.cat([updt_src,
+                            updt_dst],
                            dim=1)
         e = F.leaky_relu(self.tok_att(cat_uv))
-        return {'m': updt_neighbors, 'e': e}
+        return {'m': updt_src, 'e': e}
     
-    def reduce_func(self, nodes):
+    def reduce_func_2tok(self, nodes):
         alpha = self.attn_drop(F.softmax(nodes.mailbox['e'], dim=1))
         h = torch.sum(alpha * nodes.mailbox['m'], dim=1)
         return {'h': h}
@@ -312,14 +340,15 @@ class HeteroRGCNLayer(nn.Module):
         e_ij = alpha_ij * W * h_j
         alpha_ij = LeakyReLU(W * (Wh_j || Wh_i))
         '''
-        neighbors = edges.src['h']
-        updt_self_node = self.node_trans(edges.dst['h'])
-        updt_neighbors = self.node_trans(neighbors)
-        cat_uv = torch.cat([updt_neighbors,
-                            updt_self_node],
+        src = edges.src['h']
+        updt_dst = self.node_trans(edges.dst['h'])
+        updt_src = self.node_trans(src)
+        cat_uv = torch.cat([updt_src,
+                            updt_dst],
                            dim=1)
         e = F.leaky_relu(self.node_att(cat_uv))
-        return {'m': updt_neighbors, 'e': e}
+        return {'m': updt_src, 'e': e,}
+#         return {'h': edges.src['h']}
     
     
     def forward(self, G, feat_dict, bert_token_emb):
@@ -331,10 +360,10 @@ class HeteroRGCNLayer(nn.Module):
             if self.residual:
                 G.nodes[srctype].data['resid'] = feat_dict[srctype]
             if "2tok" in etype:                
-                funcs[etype] = (self.message_func_2_tok, self.reduce_func)
+                funcs[etype] = (self.message_func_2tok, self.reduce_func_2tok)
             elif "srl2srl" == etype:
                 #funcs[etype] = (self.message_func_2_tok, self.reduce_func)
-                funcs[etype] = ((lambda e: self.message_func_srl(bert_token_emb, e)) , self.reduce_func_srl)
+                funcs[etype] = ((lambda e: self.message_func_srl(bert_token_emb, e)) , self.reduce_func)
             else:
                 funcs[etype] = (self.message_func_regular_node, self.reduce_func)
         
