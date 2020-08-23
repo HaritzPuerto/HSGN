@@ -257,6 +257,7 @@ class HeteroRGCNLayer(nn.Module):
         self.feat_drop = nn.Dropout(feat_drop)
         self.attn_drop = nn.Dropout(attn_drop)
 
+        self.common_space = nn.Linear(in_size, out_size)
         self.residual = residual
 
         self.reset_parameters()
@@ -275,12 +276,12 @@ class HeteroRGCNLayer(nn.Module):
         rel_emb = torch.stack(rel_emb, dim=0)
         assert not torch.isnan(rel_emb).any()
         
-        neighbors = edges.src['h']
-        m = self.rel_trans(torch.cat((neighbors, rel_emb), dim=1))
+        src = edges.src['h']
+        m = self.common_space(self.rel_trans(torch.cat((src, rel_emb), dim=1)))
         # m: [num srl x 768]
-        updt_self_node = self.node_trans(edges.dst['h'])
-        cat_uv = torch.cat([rel_emb,
-                            updt_self_node],
+        dst = self.node_trans(edges.dst['h'])
+        cat_uv = torch.cat([m,
+                            dst],
                            dim=1)
         e = F.leaky_relu(self.node_att(cat_uv))
         return {'m': m, 'e': e}
@@ -336,13 +337,12 @@ class HeteroRGCNLayer(nn.Module):
                 G.nodes[srctype].data['resid'] = feat_dict[srctype]
                 
             funcs[etype] = (self.message_func_regular_node, self.reduce_func)
-#             if "2tok" in etype:                
-#                 funcs[etype] = (self.message_func_2_tok, self.reduce_func)
-#             elif "srl2srl" == etype:
-#                 #funcs[etype] = (self.message_func_2_tok, self.reduce_func)
-#                 funcs[etype] = ((lambda e: self.message_func_srl(bert_token_emb, e)) , self.reduce_func_srl)
-#             else:
-#                 funcs[etype] = (self.message_func_regular_node, self.reduce_func)
+            if "2tok" in etype:                
+                funcs[etype] = (self.message_func_2_tok, self.reduce_func)
+            elif "srl2srl" == etype:
+                funcs[etype] = ((lambda e: self.message_func_srl(bert_token_emb, e)) , self.reduce_func_srl)
+            else:
+                funcs[etype] = (self.message_func_regular_node, self.reduce_func)
         
         # Trigger message passing of multiple types.
         # The first argument is the message passing functions for each relation.
@@ -1282,8 +1282,8 @@ model_path = '/workspace/ml-workspace/thesis_git/HSGN/models'
 best_eval_f1 = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="SRL_only_GAT", params=PARAMS, upload_source_files=['HGAT_only_srl.py']):
-    neptune.append_tag(["GAT", "residual", "heterogenous", "wo_yn", "GRU_gate", "test"])
+with neptune.create_experiment(name="SRL_only_GAT_relations_node2token", params=PARAMS, upload_source_files=['HGAT_only_srl.py']):
+    neptune.append_tag(["GAT", "node2token_attn", "relations" "residual", "heterogenous", "wo_yn", "GRU_gate", "test"])
     neptune.set_property('server', 'IRGPU2')
     neptune.set_property('training_set_path', training_path)
     neptune.set_property('dev_set_path', dev_path)
