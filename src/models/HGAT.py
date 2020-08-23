@@ -106,7 +106,7 @@ list_metadata_files = natural_sort([f for f in listdir(training_metadata_path) i
 list_graph_metadata_files = list(zip(list_graph_files, list_metadata_files))
 
 list_graphs = []
-for (g_file, metadata_file) in tqdm(list_graph_metadata_files[0:100]):
+for (g_file, metadata_file) in tqdm(list_graph_metadata_files[0:20000]):
     if ".bin" in g_file:
         with open(os.path.join(training_graphs_path, g_file), "rb") as f:
             graph = pickle.load(f)
@@ -244,11 +244,12 @@ class HeteroRGCNLayer(nn.Module):
         self.tok_att = nn.Linear(2 * in_size, out_size)
 
         self.rel_trans = nn.Linear(2 * in_size, out_size)
-        # self.rel_att = nn.Linear(2 * in_size, out_size)
 
         self.node_trans = nn.Linear(in_size, out_size)
         self.node_att = nn.Linear(2 * in_size, out_size)
 
+        self.common_space_trans = nn.Linear(in_size, out_size)
+        
         self.feat_drop = nn.Dropout(feat_drop)
         self.attn_drop = nn.Dropout(attn_drop)
 
@@ -272,7 +273,7 @@ class HeteroRGCNLayer(nn.Module):
         assert not torch.isnan(rel_emb).any()
 #         return {'rel': rel_emb, 'srl': edges.src['h']}
         src = edges.src['h']
-        m = self.node_trans(self.rel_trans(torch.cat((src, rel_emb), dim=1)))
+        m = self.common_space_trans(self.rel_trans(torch.cat((src, rel_emb), dim=1)))
         # m: [num srl x 768]
         dst = self.node_trans(edges.dst['h'])
         cat_uv = torch.cat([m,
@@ -289,33 +290,6 @@ class HeteroRGCNLayer(nn.Module):
         alpha = self.attn_drop(F.softmax(nodes.mailbox['e'], dim=1))
         h = torch.sum(alpha * nodes.mailbox['m'], dim=1)
         return {'h': h}
-        ########################
-#         h = nodes.mailbox['h']
-#         h_upd = self.node_trans(h)
-#         self_node = nodes.data['h'] #already included in h because of self edge
-#         print(nodes)
-#         if 'srl' in nodes.mailbox:
-#             srl = nodes.mailbox['srl']
-#             rel_emb = nodes.mailbox['rel']
-#             srl_rel = self.rel_trans(torch.cat((srl, rel_emb), dim=1))
-#             # srl_rel: [num srl x 768]
-#             neighbors = torch.stack((srl_rel, h_upd), dim=0)
-#         else:
-#             neighbors = h_upd
-#         neighbors_common_space = self.common_space(neighbors)
-#         self_node_upd = self.common_space(self.node_trans(self_node))
-#         list_cat = []
-#         for v in neighbors_common_space:
-#             print(v.shape)
-#             print(self_node_upd.shape)
-#             #torch.Size([1, 768])
-#             #torch.Size([7, 768])
-#             list_cat.append(torch.cat([v, self_node_upd], dim=1))
-#         cat_uv = torch.stack(list_cat, dim=0)
-#         e = F.leaky_relu(self.node_att(cat_uv))
-#         alpha = self.attn_drop(F.softmax(e, dim=1))
-#         h = torch.sum(alpha * neighbors_common_space, dim=1)
-#         return {'h': h}
     
     def message_func_2tok(self, edges):
         '''
@@ -347,9 +321,7 @@ class HeteroRGCNLayer(nn.Module):
                             updt_dst],
                            dim=1)
         e = F.leaky_relu(self.node_att(cat_uv))
-        return {'m': updt_src, 'e': e,}
-#         return {'h': edges.src['h']}
-    
+        return {'m': updt_src, 'e': e,}    
     
     def forward(self, G, feat_dict, bert_token_emb):
         # The input is a dictionary of node features for each type
@@ -362,15 +334,10 @@ class HeteroRGCNLayer(nn.Module):
             if "2tok" in etype:                
                 funcs[etype] = (self.message_func_2tok, self.reduce_func_2tok)
             elif "srl2srl" == etype:
-                #funcs[etype] = (self.message_func_2_tok, self.reduce_func)
                 funcs[etype] = ((lambda e: self.message_func_srl(bert_token_emb, e)) , self.reduce_func)
             else:
                 funcs[etype] = (self.message_func_regular_node, self.reduce_func)
-        
-        # Trigger message passing of multiple types.
-        # The first argument is the message passing functions for each relation.
-        # The second one is the type wise reducer, could be "sum", "max",
-        # "min", "mean", "stack"
+
         G.multi_update_all(funcs, 'sum')
         out = None
         if self.residual:
@@ -462,7 +429,7 @@ class HGNModel(BertPreTrainedModel):
         
         # span prediction
         self.num_labels = config.num_labels
-        self.qa_outputs = nn.Linear(config.hidden_size*3, config.num_labels)
+        self.qa_outputs = nn.Linear(config.hidden_size, config.num_labels)
 
         # ans type prediction
         self.dropout_ans_type = nn.Dropout(config.hidden_dropout_prob)
@@ -471,6 +438,12 @@ class HGNModel(BertPreTrainedModel):
 #                                                            nn.ReLU(),
 #                                                  nn.Linear(int(dict_params['hidden_size_classifier']/2),
 #                                                            3))
+        
+        self.fuse_tok_srl_ent = nn.Sequential(nn.Linear(3*dict_params['out_feats'],
+                                                        dict_params['out_feats']),
+                                              nn.ReLU(),
+                                              nn.Linear(dict_params['out_feats'],
+                                                        dict_params['out_feats']))
         # init weights
         self.init_weights()
         # params
@@ -511,7 +484,7 @@ class HGNModel(BertPreTrainedModel):
         
         # add graph info to the bert token embeddings
         #sequence_output = self.update_sequence_outputs(sequence_output, graph, graph_emb)
-        sequence_output = self.concat_tok_ent_srl(graph_emb['tok'], graph, graph_emb)
+        sequence_output = self.fuse_tok_ent_srl(graph_emb['tok'], graph, graph_emb)
         sequence_output = sequence_output.unsqueeze(0)
         # span prediction
         span_loss = None
@@ -549,7 +522,7 @@ class HGNModel(BertPreTrainedModel):
                 #'ans_type': graph_out['ans_type'],
                 'span': {'loss': span_loss, 'start_logits': start_logits, 'end_logits': end_logits}}  
     
-    def concat_tok_ent_srl(self, bert_emb, g, graph_emb):
+    def fuse_tok_ent_srl(self, bert_emb, g, graph_emb):
         new_seq_emb = []
         for i, tok_node in enumerate(g.nodes('tok')):
             (srl_node, _) = g.in_edges(tok_node, etype='srl2tok')
@@ -564,7 +537,7 @@ class HGNModel(BertPreTrainedModel):
             if len(ent_node) != 0:
                 ent_node = ent_node[0]
                 ent_emb =  graph_emb['ent'][ent_node]
-            new_seq_emb.append(torch.cat((bert_emb[i], srl_emb, ent_emb), dim=0))
+            new_seq_emb.append(self.fuse_tok_srl_ent(torch.cat((bert_emb[i], srl_emb, ent_emb), dim=0)))
         return torch.stack(new_seq_emb)
     
     def graph_forward(self, graph, bert_context_emb, train):
