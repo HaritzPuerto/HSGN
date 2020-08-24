@@ -106,7 +106,7 @@ list_metadata_files = natural_sort([f for f in listdir(training_metadata_path) i
 list_graph_metadata_files = list(zip(list_graph_files, list_metadata_files))
 
 list_graphs = []
-for (g_file, metadata_file) in tqdm(list_graph_metadata_files[0:100]):
+for (g_file, metadata_file) in tqdm(list_graph_metadata_files[0:20000]):
     if ".bin" in g_file:
         with open(os.path.join(training_graphs_path, g_file), "rb") as f:
             graph = pickle.load(f)
@@ -362,7 +362,6 @@ class HeteroRGCNLayer(nn.Module):
             if "2tok" in etype:                
                 funcs[etype] = (self.message_func_2tok, self.reduce_func_2tok)
             elif "srl2srl" == etype:
-                #funcs[etype] = (self.message_func_2_tok, self.reduce_func)
                 funcs[etype] = ((lambda e: self.message_func_srl(bert_token_emb, e)) , self.reduce_func)
             else:
                 funcs[etype] = (self.message_func_regular_node, self.reduce_func)
@@ -462,7 +461,7 @@ class HGNModel(BertPreTrainedModel):
         
         # span prediction
         self.num_labels = config.num_labels
-        self.qa_outputs = nn.Linear(config.hidden_size*3, config.num_labels)
+        self.qa_outputs = nn.Linear(config.hidden_size, config.num_labels)
 
         # ans type prediction
         self.dropout_ans_type = nn.Dropout(config.hidden_dropout_prob)
@@ -507,12 +506,12 @@ class HGNModel(BertPreTrainedModel):
         graph_out, graph_emb = self.graph_forward(graph, sequence_output, train)
         # clean gpu mem
         
-        #sequence_output = graph_emb['tok'].unsqueeze(0)
+        sequence_output = graph_emb['tok'].unsqueeze(0)
         
         # add graph info to the bert token embeddings
         #sequence_output = self.update_sequence_outputs(sequence_output, graph, graph_emb)
-        sequence_output = self.concat_tok_ent_srl(graph_emb['tok'], graph, graph_emb)
-        sequence_output = sequence_output.unsqueeze(0)
+        #sequence_output = self.concat_tok_ent_srl(graph_emb['tok'], graph, graph_emb)
+        #sequence_output = sequence_output.unsqueeze(0)
         # span prediction
         span_loss = None
         start_logits = None
@@ -1245,8 +1244,8 @@ model_path = '/workspace/ml-workspace/thesis_git/HSGN/models'
 best_eval_f1 = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="Relational_HGAT", params=PARAMS, upload_source_files=['HGAT.py']):
-    neptune.append_tag(["Relations", "residual", "heterogenous", "wo_yn", "concat_tok_ent_srl", "test"])
+with neptune.create_experiment(name="HGAT", params=PARAMS, upload_source_files=['HGAT.py']):
+    neptune.append_tag(["No relation", "residual", "heterogenous", "wo_yn", "test"])
     neptune.set_property('server', 'IRGPU2')
     neptune.set_property('training_set_path', training_path)
     neptune.set_property('dev_set_path', dev_path)
