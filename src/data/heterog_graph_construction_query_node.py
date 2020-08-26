@@ -41,18 +41,18 @@ hotpotqa_path = 'external/'
 intermediate_train_data_path = 'interim/training/'
 intermediate_dev_data_path = 'interim/dev/'
 
+# training data
 with open(os.path.join(data_path, hotpotqa_path, "hotpot_train_v1.1.json"), "r") as f:
     hotpot_train = json.load(f)
 with open(os.path.join(data_path, intermediate_train_data_path, "list_hotpot_ner_no_coref_train.p"), "rb") as f:
     list_hotpot_train_ner = pickle.load(f)
 with open(os.path.join(data_path, intermediate_train_data_path, "dict_ins_doc_sent_srl_triples.json"), 'r') as f:
     dict_ins_doc_sent_srl_triples = json.load(f)
-with open(os.path.join(data_path, hotpotqa_path, "hotpot_dev_distractor_v1.json"), "r") as f:
-    hotpot_dev = json.load(f)
-with open(os.path.join(data_path, intermediate_dev_data_path, "list_hotpot_ner_no_coref_dev.p"), "rb") as f:
-    list_hotpot_dev_ner = pickle.load(f)
-with open(os.path.join(data_path, intermediate_dev_data_path, "dict_ins_doc_sent_srl_triples_dev.json"), 'r') as f:
-    dict_ins_doc_sent_srl_triples_dev = json.load(f)
+with open(os.path.join(data_path, intermediate_train_data_path, "dict_ins_query_srl_triples.json"), "r") as f:
+    dict_ins_query_srl_triples_training = json.load(f)
+with open(os.path.join(data_path, intermediate_train_data_path, "list_ent_query_training.p"), "rb") as f:
+    list_ent_query_training = pickle.load(f)
+print("Training data loaded")
 
 
 # -
@@ -297,12 +297,13 @@ class Dataset():
         list_srl2self = []
         list_srl_tmp2srl = []
         list_srl_loc2srl = []
-        list_ent2ent = []
+        list_ent2ent_self = []
         list_token2token = []
         ## multi-hop
         list_doc_multihop = []
         list_sent_multihop = []
         list_srl_multihop = []
+        list_ent_multihop = []
         ## srl_edge_metadata (for embeddings)
         list_srl_rel = []
         
@@ -310,44 +311,36 @@ class Dataset():
         ## metadata of docs
         list_doc_context_idx = []
         list_doc_st_end_idx = []
-        list_doc_node_type = []
         list_doc_lbl = []
         ## metadata of sents
         list_sent_context_idx = []
         list_sent_st_end_idx = []
-        list_sent_node_type = []
         list_sent_lbl = []
         ## metadata of srl
         list_srl_context_idx = []
         list_srl_st_end_idx = []
-        list_srl_node_type = []
         list_srl_lbl = []
         ## metadata of srl tmp
         list_srl_tmp_context_idx = []
         list_srl_tmp_st_end_idx = []
-        list_srl_tmp_node_type = []
         list_srl_tmp_lbl = []
         ## metadata of srl loc
         list_srl_loc_context_idx = []
         list_srl_loc_st_end_idx = []
-        list_srl_loc_node_type = []
         list_srl_loc_lbl = []
         ## metadata of ents
         list_ent_context_idx = []
         list_ent_st_end_idx = []
-        list_ent_node_type = []
-        list_ent_lbl = []
-        # metadata of ents
-        list_ent_context_idx = []
-        list_ent_st_end_idx = []
-        list_ent_node_type = []
         list_ent_lbl = []
         # metadata of tokens
         list_token_context_idx = []
         list_token_st_end_idx = []
-        list_token_node_type = []
         list_token_lbl = []
+        # metadata of query
+        list_query_st_end_idx = []
         
+        list_ent_node2str = []
+        dict_ent_str2ent_node = dict()
         token_node_idx = 0
         for i in range(self.max_len):
             list_token_context_idx.append(ins_idx)
@@ -380,7 +373,6 @@ class Dataset():
             # metadata doc
             list_doc_context_idx.append(ins_idx)
             list_doc_st_end_idx.append(doc_metadata['doc_token_st_end_idx'])
-            list_doc_node_type.append( node_type2idx['doc'])
             list_doc_lbl.append(1)
             # end metada doc
             # add edges to its tokens
@@ -410,7 +402,6 @@ class Dataset():
                 # metadata sent
                 list_sent_context_idx.append(ins_idx)
                 list_sent_st_end_idx.append((sent_st, sent_end))
-                list_sent_node_type.append( node_type2idx['sent'])
                 sent_lbl = sent_idx in dict_supporting_docs[doc_title]
                 list_sent_lbl.append(sent_lbl)
                 # end metada sent
@@ -509,7 +500,7 @@ class Dataset():
                                 current_srl_node = srl_node_idx
                                 srl_node_idx += 1
                                 list_arg_nodes.append(current_srl_node)
-                                
+#                                 print("SRL:", current_srl_node, arg_str)
                                 # srl <-> token
                                 for tok in range(st_tok_idx, end_tok_idx):
                                     list_srl2tok.append((current_srl_node, tok))  # lbl: [SRL2TOK]
@@ -536,18 +527,26 @@ class Dataset():
                                             srl_lbl = True
                                             list_lbl[-1] = srl_lbl
                                         # ent node
-                                        current_ent_node = ent_node_idx
-                                        ent_node_idx += 1
+                                        if ent in dict_ent_str2ent_node:
+                                            current_ent_node = dict_ent_str2ent_node[ent]
+                                        else:
+                                            current_ent_node = ent_node_idx
+                                            ent_node_idx += 1
+                                            dict_ent_str2ent_node[ent] = current_ent_node
+                                            list_ent_node2str.append(ent)
+                                            # metadata ent
+                                            list_ent_context_idx.append(ins_idx)
+                                            list_ent_st_end_idx.append((st_tok_idx, end_tok_idx))
+                                            list_ent_lbl.append(lbl)
+                                        
+#                                         print("ent:", current_ent_node, ent)
+#                                         print("ent2srl", current_ent_node, current_srl_node)
                                         # add edges (srl_arg -> ent and ent -> srl_arg)
                                         list_srl2ent.append((current_srl_node, current_ent_node))  # lbl: [SRL2ENT]
                                         list_ent2srl.append((current_ent_node, current_srl_node))  # lbl: [ENT2SRL]
                                         # self edge ent
-                                        list_ent2ent.append((current_ent_node, current_ent_node))  # lbl: [ENT2ENT_SELF]
-                                        # metadata ent
-                                        list_ent_context_idx.append(ins_idx)
-                                        list_ent_st_end_idx.append((st_tok_idx, end_tok_idx))
-                                        #list_node_type.append(node_type2idx['ent'])
-                                        list_ent_lbl.append(lbl)
+                                        list_ent2ent_self.append((current_ent_node, current_ent_node))  # lbl: [ENT2ENT_SELF]
+                                        
                                         # srl -> token
                                         for tok in range(st_tok_idx, end_tok_idx):
                                             list_ent2tok.append((current_ent_node, tok))  # lbl: [ENT2TOK]
@@ -589,26 +588,15 @@ class Dataset():
                 list_sent2doc.append((current_sent_node, current_doc_node))
                 # doc -> sent  # lbl: [DOC2SENT]
                 list_doc2sent.append((current_doc_node, current_sent_node))
-            # fully connected sent nodes # lbl: [SENT2SENT] 
-            list_sent2sent.extend([(u, v) for u in list_sent_nodes for v in list_sent_nodes])
+            # sequentially connected sent nodes # lbl: [SENT2SENT] 
+            list_sent2sent.extend([(u, v) for u in list_sent_nodes for v in list_sent_nodes if u <= v])
         # self-edges to the docs
         list_doc2doc.extend([(u, u) for u in list_doc_nodes])  # lbl: [DOC2DOC_SELF]
 #         # fully connected doc nodes    
 #         list_doc2doc.extend([(u, v) for u in list_doc_nodes for v in list_doc_nodes if u != v])
 #         list_doc2doc.extend([(v, u) for u in list_doc_nodes for v in list_doc_nodes if u != v])
-        ############# NER edges ##################
-        list_edges_sent_common_ent = self.create_common_entity_edges_sent_lvl(dict_sent_node2metadata, list_entities)
-        list_sent_multihop.extend(list_edges_sent_common_ent)
-        list_srl_ent_edges = self.create_common_entity_edges_srl_lvl(dict_srl_metadata)
-        list_srl_multihop.extend(list_srl_ent_edges)
-        ############ END Entity Edges ############
         
         ############ Query node ################
-        (q_st, q_end) = dict_idx['q_token_st_end_idx']
-        # metadata sent
-        list_query_st_end_idx.append((q_st, q_end))
-        
-        # for yes/no answers
         for key, triple_dict in self.dict_ins_query_triples[str(ins_idx)].items():
             if not self.valid_srl_triple(triple_dict):
                 continue
@@ -713,18 +701,24 @@ class Dataset():
                                     srl_lbl = True
                                     list_lbl[-1] = srl_lbl
                                 # ent node
-                                current_ent_node = ent_node_idx
-                                ent_node_idx += 1
+                                if ent in dict_ent_str2ent_node:
+                                    current_ent_node = dict_ent_str2ent_node[ent]
+                                else:
+                                    current_ent_node = ent_node_idx
+                                    ent_node_idx += 1
+                                    dict_ent_str2ent_node[ent] = current_ent_node
+                                    list_ent_node2str.append(ent)
+                                    # metadata ent
+                                    list_ent_context_idx.append(ins_idx)
+                                    list_ent_st_end_idx.append((st_tok_idx, end_tok_idx))
+                                    list_ent_lbl.append(lbl)
+                                    
                                 # add edges (srl_arg -> ent and ent -> srl_arg)
                                 list_srl2ent.append((current_srl_node, current_ent_node))  # lbl: [SRL2ENT]
                                 list_ent2srl.append((current_ent_node, current_srl_node))  # lbl: [ENT2SRL]
                                 # self edge ent
-                                list_ent2ent.append((current_ent_node, current_ent_node))  # lbl: [ENT2ENT_SELF]
-                                # metadata ent
-                                list_ent_context_idx.append(ins_idx)
-                                list_ent_st_end_idx.append((st_tok_idx, end_tok_idx))
-                                #list_node_type.append(node_type2idx['ent'])
-                                list_ent_lbl.append(lbl)
+                                list_ent2ent_self.append((current_ent_node, current_ent_node))  # lbl: [ENT2ENT_SELF]
+                                
                                 # srl -> token
                                 for tok in range(st_tok_idx, end_tok_idx):
                                     list_ent2tok.append((current_ent_node, tok))  # lbl: [ENT2TOK]
@@ -760,7 +754,21 @@ class Dataset():
             list_srl2query.extend([(arg, 0) for arg in list_arg_nodes])        
             # query -> arg_srl  # lbl: [QUERY2SRL]
             list_query2srl.extend([(0, arg) for arg in list_arg_nodes])
+            (q_st, q_end) = dict_idx['q_token_st_end_idx']
+            # metadata sent
+            list_query_st_end_idx.append((q_st, q_end))
         ############ END Query node ################
+        list_ent_nodes = list(range(ent_node_idx))
+        (list_ent_multihop, 
+         list_srl_multihop,
+         list_sent_multihop,
+         list_sent2query_multihop,
+         list_query2sent_multihop) = self.multi_hop_edges(list_ent_nodes, 
+                                                          list_ent_node2str, 
+                                                          list_ent2srl,                
+                                                          list_srl2sent,
+                                                          list_srl2query,
+                                                          90)
         # make the heterogenous graph
         list_srl2self = [(v, v) for v in range(srl_node_idx)]
         dict_edges = {('doc', 'doc2sent', 'sent'): list_doc2sent,  # lbl: [DOC2SENT]
@@ -768,7 +776,10 @@ class Dataset():
                      ('sent', 'sent2srl', 'srl'): list_sent2srl,  # lbl: [SENT2SRL]
                      ('srl', 'srl2sent', 'sent'): list_srl2sent,  # lbl: [SRL2SENT]
                      ('srl', 'srl2ent', 'ent'): list_srl2ent,     # lbl: [SRL2ENT]
-                     ('ent', 'ent2srl', 'srl'): list_ent2srl,     # lbl: [ENT2SRL]
+                     ('srl', 'srl2query', 'query'): list_srl2query,
+                      ('query', 'query2srl', 'srl'): list_query2srl,
+                      ('ent', 'ent2srl', 'srl'): list_ent2srl,     # lbl: [ENT2SRL]
+                      
                      # to token
                      ('doc', 'doc2tok', 'tok'): list_doc2tok,     # lbl: [DOC2TOK]
                      ('tok', 'tok2doc', 'doc'): list_tok2doc,     # lbl: [TOK2DOC]
@@ -784,11 +795,14 @@ class Dataset():
                      ('sent', 'sent2sent', 'sent'): list_sent2sent,   # lbl: [SENT2SENT]
                      ('srl', 'srl2srl', 'srl'): list_srl2srl,         # lbl: [SRL2SRL]
                      ('srl', 'srl2self', 'srl'): list_srl2self,         # lbl: [SRL2SELF]
-                     ('ent', 'ent2ent', 'ent'): list_ent2ent,         # lbl: [ENT2ENT_SELF]
+                     ('ent', 'ent2ent', 'ent'): list_ent2ent_self,         # lbl: [ENT2ENT_SELF]
                      ('tok', 'token2token', 'tok'): list_token2token, # lbl: [TOK2TOK_SELF]
                      # multi-hop edges
-                     ('sent', 'sent_multihop', 'sent'): list_sent_multihop,
+                     ('ent', 'ent_multihop', 'ent'): list_ent_multihop,
                      ('srl', 'srl_multihop', 'srl'): list_srl_multihop,
+                     ('sent', 'sent_multihop', 'sent'): list_sent_multihop,
+                     ('sent', 'sent2query_multihop', 'query'): list_sent2query_multihop,
+                     ('query', 'query2sent_multihop', 'sent'): list_query2sent_multihop,
                     }
         if list_srl_loc2srl != []:
             dict_edges[('srl_loc', 'srl_loc2srl', 'srl')] = list_srl_loc2srl  # lbl: [SRL_LOC2SRL]
@@ -831,7 +845,9 @@ class Dataset():
         graph_metadata['tok']['st_end_idx'] =  np.array(list_token_st_end_idx)
         graph_metadata['tok']['list_context_idx'] = np.array(list_token_context_idx).reshape(-1,1)
         graph_metadata['tok']['labels'] = np.array(list_token_lbl).reshape(-1,1)
-
+        # query metadata
+        graph_metadata['query'] = dict()
+        graph_metadata['query']['st_end_idx'] =  np.array(list_query_st_end_idx)
 #         # doc metadata
 #         graph.nodes['doc'].data['st_end_idx'] =  np.array(list_doc_st_end_idx)
 #         graph.nodes['doc'].data['list_context_idx'] = np.array(list_doc_context_idx).reshape(-1,1)
@@ -945,51 +961,108 @@ class Dataset():
     def intersection(self, l1: list, l2: list) -> set:
         return set(l1).intersection(l2)
     
-    def multi_hop_edges(self, list_ent_nodes, list_ent_str, list_ent2srl, list_srl2sent, threshold):
+    def multi_hop_edges(self, list_ent_nodes, list_ent_str, list_ent2srl, list_srl2sent, list_srl2query, threshold):
+#         print("######################## num ent", max(list_ent_nodes))
+#         print("ent2srl", list_ent2srl)
+#         print("srl2sent", list_srl2sent)
+#         print(list_ent_str)
+        dict_ent2srl = dict()
+        dict_srl2sent = dict()
+        dict_srl2query = dict()
+        for (e, srl) in list_ent2srl:
+            dict_ent2srl[e] = srl
+        for (srl, sent) in list_srl2sent:
+            dict_srl2sent[srl] = sent
+        for (srl, query) in list_srl2query:
+            dict_srl2query[srl] = query
+
         list_ent_multihop = []
         list_srl_multihop = []
         list_sent_multihop = []
+        list_sent2query_multihop = []
+        list_query2sent_multihop = []
         for e1 in list_ent_nodes:
             for e2 in list_ent_nodes:
-                if e1 != e2:
-                    e1_str = list_ent_nodes[e1]
-                    e2_str = list_ent_nodes[e2]
+                if e1 < e2:
+                    e1_str = list_ent_str[e1]
+                    e2_str = list_ent_str[e2]
                     if fuzz.token_set_ratio(e1_str, e2_str) >= threshold:
+#                         print(e1_str, e2_str, fuzz.token_set_ratio(e1_str, e2_str))
                         # ent
                         list_ent_multihop.append((e1, e2))  # LBL: [ENT2ENT_MULTIHOP]
                         list_ent_multihop.append((e2, e1))  # LBL: [ENT2ENT_MULTIHOP]
                         # srl
-                        srl1 = list_ent_str[e1]
-                        srl2 = list_ent_str[e2]
+                        srl1 = dict_ent2srl[e1]
+                        srl2 = dict_ent2srl[e2]
                         list_srl_multihop.append((srl1, srl2))  # LBL: [SRL2SRL_MULTIHOP]
                         list_srl_multihop.append((srl2, srl1))  # LBL: [SRL2SRL_MULTIHOP]
                         # sent
-                        sent1 = list_srl2sent[srl1]
-                        sent2 = list_srl2sent[srl2]
-                        list_sent_multihop.append((sent1, sent2))  # LBL: [SENT2SENT_MULTIHOP]
-                        list_sent_multihop.append((sent2, sent1))  # LBL: [SENT2SENT_MULTIHOP]
-        return list_ent_multihop, list_srl_multihop, list_sent_multihop
+                        sent1 = None
+                        sent2 = None
+                        q_node = None
+                        if srl1 in dict_srl2sent:
+                            sent1 = dict_srl2sent[srl1]
+                        elif srl1 in dict_srl2query:
+                            q_node = dict_srl2query[srl]
+                        if srl2 in dict_srl2sent:
+                            sent2 = dict_srl2sent[srl2]
+                        elif srl2 in dict_srl2query:
+                            q_node = dict_srl2query[srl]
+                        if sent1 is not None and sent2 is not None:
+                            list_sent_multihop.append((sent1, sent2))  # LBL: [SENT2SENT_MULTIHOP]
+                            list_sent_multihop.append((sent2, sent1))  # LBL: [SENT2SENT_MULTIHOP]
+#                             print(sent1, sent2, srl1, srl2, e1, e2, e1_str, e2_str, fuzz.token_set_ratio(e1_str, e2_str))
+                        elif sent1 is None and (sent2 is not None and q_node is not None):
+                            list_sent2query_multihop.append((sent2, query))
+                            list_query2sent_multihop.append((query, sent2))
+                        elif sent2 is None and (sent1 is not None and q_node is not None):
+                            list_sent2query_multihop.append((sent1, query))
+                            list_query2sent_multihop.append((query, sent1))
+        
+        list_ent_multihop = list(set(list_ent_multihop))
+#         for (e1, e2) in list_ent_multihop:
+#             print(list_ent_str[e1], list_ent_str[e2], e1, e2)
+#         print(list_ent_multihop)
+        list_srl_multihop = list(set(list_srl_multihop))
+        list_sent_multihop = list(set(list_sent_multihop))
+        list_sent2query_multihop = list(set(list_sent2query_multihop))
+        list_query2sent_multihop = list(set(list_query2sent_multihop))
+        return list_ent_multihop, list_srl_multihop, list_sent_multihop, list_sent2query_multihop, list_query2sent_multihop
 # -
 
 
-train_dataset = Dataset(hotpot_train, list_hotpot_train_ner, dict_ins_doc_sent_srl_triples, 1)
+train_dataset = Dataset(hotpot_train, list_hotpot_train_ner, dict_ins_doc_sent_srl_triples,
+                        dict_ins_query_srl_triples_training, list_ent_query_training, batch_size=1)
 list_graphs, list_g_metadata, list_context, list_list_srl_edges_metadata, list_span_idx = train_dataset.create_dataloader()
+
+
+def add_metadata2graph(graph, metadata):
+    for (node, dict_node) in metadata.items():
+        for (k, v) in dict_node.items():
+            graph.nodes[node].data[k] = torch.tensor(v)
+    return graph
+
+
+# +
+# edges = 0
+# for g in list_graphs:
+#     edges += g.number_of_edges('ent2ent_multihop')
+# print(edges/len(list_graphs)/2) # divided by two because edges are bidirectional
+# -
 
 for g_idx, list_dict_edge in enumerate(list_list_srl_edges_metadata):
     list_graphs[g_idx].edges['srl2srl'].data['rel_type'] = torch.tensor([edge['rel_type'] for edge in list_dict_edge])
     list_graphs[g_idx].edges['srl2srl'].data['span_idx'] = torch.tensor([edge['span_idx'] for edge in list_dict_edge])
 
-training_path = os.path.join(data_path, 'processed/training/heterog_20200815')
+training_path = os.path.join(data_path, 'processed/training/heterog_20200826')
 training_graph_path = os.path.join(training_path, 'graphs')
 training_metadata_path = os.path.join(training_path, 'metadata')
 
-for i, g in enumerate(tqdm(list_graphs)):
-    with open(os.path.join(training_graph_path, "graph" + str(i) + ".bin"), "wb" ) as f:
-        pickle.dump(g, f)
-    with open( os.path.join(training_metadata_path, "metadata" + str(i) + ".bin"), "wb" ) as f:
-        pickle.dump(list_g_metadata[i], f)
-    # separate the metadata from the graph to store it (do not add metadata in the first place)
-    # weird problem if the metadata is inside the graph
+list_graph_metadata = list(zip(list_graphs, list_g_metadata))
+for i, (graph, metadata) in enumerate(tqdm(list_graph_metadata)):
+    graph = add_metadata2graph(graph, metadata)
+    f = os.path.join(training_graph_path, "graph" + str(i) + ".bin")
+    dgl.save_graphs(f, [graph])
 
 # +
 list_input_ids = [context['input_ids'] for context in list_context]
@@ -1010,8 +1083,22 @@ with open(os.path.join(training_path, 'list_span_idx.p'), 'wb') as f:
 
 
 
+# dev data
+with open(os.path.join(data_path, hotpotqa_path, "hotpot_dev_distractor_v1.json"), "r") as f:
+    hotpot_dev = json.load(f)
+with open(os.path.join(data_path, intermediate_dev_data_path, "list_hotpot_ner_no_coref_dev.p"), "rb") as f:
+    list_hotpot_dev_ner = pickle.load(f)
+with open(os.path.join(data_path, intermediate_dev_data_path, "dict_ins_doc_sent_srl_triples_dev.json"), 'r') as f:
+    dict_ins_doc_sent_srl_triples_dev = json.load(f)
+with open(os.path.join(data_path, intermediate_dev_data_path, "dict_ins_query_srl_triples.json"), "r") as f:
+    dict_ins_query_srl_triples_dev = json.load(f)
+with open(os.path.join(data_path, intermediate_train_data_path, "list_ent_query_dev.p"), "rb") as f:
+    list_ent_query_dev = pickle.load(f)
+print("Dev data loaded")
+
 # +
-dev_dataset = Dataset(hotpot_dev, list_hotpot_dev_ner, dict_ins_doc_sent_srl_triples_dev, 1)
+dev_dataset = Dataset(hotpot_dev, list_hotpot_dev_ner, dict_ins_doc_sent_srl_triples_dev,
+                      dict_ins_query_srl_triples_dev, list_ent_query_dev, batch_size=1)
 list_graphs, list_g_metadata, list_context, list_list_srl_edges_metadata, list_span_idx = dev_dataset.create_dataloader()
 
 for g_idx, list_dict_edge in enumerate(list_list_srl_edges_metadata):
@@ -1026,23 +1113,20 @@ tensor_token_type_ids = torch.tensor(list_token_type_ids)
 tensor_attention_masks = torch.tensor(list_attention_masks)
 # -
 
-dev_path = os.path.join(data_path, 'processed/dev/heterog_20200815')
+dev_path = os.path.join(data_path, 'processed/dev/heterog_20200826')
 dev_graph_path = os.path.join(dev_path, 'graphs')
 dev_metadata_path = os.path.join(dev_path, 'metadata')
 
-for i, g in enumerate(list_graphs):
-    with open(os.path.join(dev_graph_path, "graph" + str(i) + ".bin"), "wb" ) as f:
-        pickle.dump(g, f)
-    with open( os.path.join(dev_metadata_path, "metadata" + str(i) + ".bin"), "wb" ) as f:
-        pickle.dump(list_g_metadata[i], f)
-    # separate the metadata from the graph to store it (do not add metadata in the first place)
+list_graph_metadata = list(zip(list_graphs, list_g_metadata))
+for i, (graph, metadata) in enumerate(tqdm(list_graph_metadata)):
+    graph = add_metadata2graph(graph, metadata)
+    f = os.path.join(dev_metadata_path, "graph" + str(i) + ".bin")
+    dgl.save_graphs(f, [graph])
 
 torch.save(tensor_input_ids, os.path.join(dev_path, 'tensor_input_ids.p'))
 torch.save(tensor_token_type_ids, os.path.join(dev_path, 'tensor_token_type_ids.p'))
 torch.save(tensor_attention_masks, os.path.join(dev_path, 'tensor_attention_masks.p'))
 with open(os.path.join(dev_path, 'list_span_idx.p'), 'wb') as f:
     pickle.dump(list_span_idx, f)
-
-list_g_metadata[2]
 
 
