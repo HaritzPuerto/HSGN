@@ -148,16 +148,23 @@ for (g_file, metadata_file) in tqdm(list_graph_metadata_files[0:20000]):
 #         dev_list_graphs.append(graph)
 
 # %%
-dev_path = os.path.join(data_path, 'processed/dev/heterog_20200826')
-dev_graph_path = os.path.join(dev_path, 'graphs')
-dev_metadata_path = os.path.join(dev_path, 'metadata')
+dev_graphs_path = os.path.join(dev_path, 'graphs/')
+dev_metadata_path = os.path.join(dev_path, 'metadata/')
 
-for i, g in enumerate(list_graphs):
-    with open(os.path.join(dev_graph_path, "graph" + str(i) + ".bin"), "wb" ) as f:
-        pickle.dump(g, f)
-    with open( os.path.join(dev_metadata_path, "metadata" + str(i) + ".bin"), "wb" ) as f:
-        pickle.dump(list_g_metadata[i], f)
-    # separate the metadata from the graph to store it (do not add metadata in the first place)
+list_graph_files = natural_sort([f for f in listdir(dev_graphs_path) if isfile(join(dev_graphs_path, f))])
+list_metadata_files = natural_sort([f for f in listdir(dev_metadata_path) if isfile(join(dev_metadata_path, f))])
+list_graph_metadata_files = list(zip(list_graph_files, list_metadata_files))
+
+dev_list_graphs = []
+for (g_file, metadata_file) in tqdm(list_graph_metadata_files):
+    if ".bin" in g_file:
+        with open(os.path.join(dev_graphs_path, g_file), "rb") as f:
+            graph = pickle.load(f)
+        with open(os.path.join(dev_metadata_path, metadata_file), "rb") as f:
+            metadata = pickle.load(f)
+        # add metadata to the graph
+        graph = add_metadata2graph(graph, metadata)
+        dev_list_graphs.append(graph)
 
 
 # %%
