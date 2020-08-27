@@ -779,22 +779,22 @@ class Dataset():
                       ('ent', 'ent2srl', 'srl'): list_ent2srl,     # lbl: [ENT2SRL]
                       
                      # to token
-                     ('doc', 'doc2tok', 'tok'): list_doc2tok,     # lbl: [DOC2TOK]
-                     ('tok', 'tok2doc', 'doc'): list_tok2doc,     # lbl: [TOK2DOC]
-                     ('sent', 'sent2tok', 'tok'): list_sent2tok,  # lbl: [SENT2TOK]
-                     ('tok', 'tok2sent', 'sent'): list_tok2sent,  # lbl: [TOK2SENT]
+#                      ('doc', 'doc2tok', 'tok'): list_doc2tok,     # lbl: [DOC2TOK]
+#                      ('tok', 'tok2doc', 'doc'): list_tok2doc,     # lbl: [TOK2DOC]
+#                      ('sent', 'sent2tok', 'tok'): list_sent2tok,  # lbl: [SENT2TOK]
+#                      ('tok', 'tok2sent', 'sent'): list_tok2sent,  # lbl: [TOK2SENT]
                      ('srl', 'srl2tok', 'tok'): list_srl2tok,     # lbl: [SRL2TOK]
-                     ('tok', 'tok2srl', 'srl'): list_tok2srl,     # lbl: [TOK2SRL]
+#                      ('tok', 'tok2srl', 'srl'): list_tok2srl,     # lbl: [TOK2SRL]
                      ('ent', 'ent2tok', 'tok'): list_ent2tok,     # lbl: [ENT2TOK]
-                     ('tok', 'tok2ent', 'ent'): list_tok2ent,     # lbl: [TOK2ENT]
+#                      ('tok', 'tok2ent', 'ent'): list_tok2ent,     # lbl: [TOK2ENT]
                      # end hierarchical
                      # same-level edges
-                     ('doc', 'doc2doc', 'doc'): list_doc2doc,         # lbl: [DOC2DOC_SELF]
+                     ('doc', 'doc2doc_self', 'doc'): list_doc2doc,         # lbl: [DOC2DOC_SELF]
                      ('sent', 'sent2sent', 'sent'): list_sent2sent,   # lbl: [SENT2SENT]
                      ('srl', 'srl2srl', 'srl'): list_srl2srl,         # lbl: [SRL2SRL]
                      ('srl', 'srl2self', 'srl'): list_srl2self,         # lbl: [SRL2SELF]
-                     ('ent', 'ent2ent', 'ent'): list_ent2ent_self,         # lbl: [ENT2ENT_SELF]
-                     ('tok', 'token2token', 'tok'): list_token2token, # lbl: [TOK2TOK_SELF]
+                     ('ent', 'ent2ent_self', 'ent'): list_ent2ent_self,         # lbl: [ENT2ENT_SELF]
+                     ('tok', 'token2token_self', 'tok'): list_token2token, # lbl: [TOK2TOK_SELF]
                      # multi-hop edges
                      ('ent', 'ent_multihop', 'ent'): list_ent_multihop,
                      ('srl', 'srl_multihop', 'srl'): list_srl_multihop,
