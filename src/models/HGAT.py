@@ -702,7 +702,7 @@ class HGNModel(BertPreTrainedModel):
         list_sent_nodes = graph.nodes('sent')
         sent_nodes_labels = graph.nodes['sent'].data['labels']
         # shape [num sent nodes x 1]
-        supporting_sent_mask = sent_nodes_labels == torch.ones((sent_nodes_labels.shape), device=device)
+        supporting_sent_mask = sent_nodes_labels == torch.ones((sent_nodes_labels.shape))
         # shape [num sent nodes x 1] with values True or False
         supporting_sent_idx = [idx for idx, class_ in enumerate(supporting_sent_mask) if class_]
         # list with the idx of supporting sent
@@ -720,7 +720,7 @@ class HGNModel(BertPreTrainedModel):
         list_srl_nodes = graph.nodes('srl')
         srl_nodes_labels = graph.nodes['srl'].data['labels']
         # shape [num labels x 1]
-        supporting_srl_mask = srl_nodes_labels == torch.ones((srl_nodes_labels.shape), device=device)
+        supporting_srl_mask = srl_nodes_labels == torch.ones((srl_nodes_labels.shape))
         # shape [num labels x 1] with values True or False
         supporting_srl_idx = [idx for idx, class_ in enumerate(supporting_srl_mask) if class_]
         # list with the idx of supporting srl
@@ -738,7 +738,7 @@ class HGNModel(BertPreTrainedModel):
         list_ent_nodes = graph.nodes('ent')
         ent_nodes_labels = graph.nodes['ent'].data['labels']
         # shape [num labels x 1]
-        supporting_ent_mask = ent_nodes_labels == torch.ones((ent_nodes_labels.shape), device=device)
+        supporting_ent_mask = ent_nodes_labels == torch.ones((ent_nodes_labels.shape))
         # shape [num labels x 1] with values True or False
         supporting_ent_idx = [idx for idx, class_ in enumerate(supporting_ent_mask) if class_]
         # list with the idx of supporting srl
