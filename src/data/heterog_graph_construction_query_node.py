@@ -776,8 +776,6 @@ class Dataset():
                      ('sent', 'sent2srl', 'srl'): list_sent2srl,  # lbl: [SENT2SRL]
                      ('srl', 'srl2sent', 'sent'): list_srl2sent,  # lbl: [SRL2SENT]
                      ('srl', 'srl2ent', 'ent'): list_srl2ent,     # lbl: [SRL2ENT]
-                     ('srl', 'srl2query', 'query'): list_srl2query,
-                      ('query', 'query2srl', 'srl'): list_query2srl,
                       ('ent', 'ent2srl', 'srl'): list_ent2srl,     # lbl: [ENT2SRL]
                       
                      # to token
@@ -801,13 +799,19 @@ class Dataset():
                      ('ent', 'ent_multihop', 'ent'): list_ent_multihop,
                      ('srl', 'srl_multihop', 'srl'): list_srl_multihop,
                      ('sent', 'sent_multihop', 'sent'): list_sent_multihop,
-                     ('sent', 'sent2query_multihop', 'query'): list_sent2query_multihop,
-                     ('query', 'query2sent_multihop', 'sent'): list_query2sent_multihop,
                     }
         if list_srl_loc2srl != []:
             dict_edges[('srl_loc', 'srl_loc2srl', 'srl')] = list_srl_loc2srl  # lbl: [SRL_LOC2SRL]
         if list_srl_tmp2srl != []:
             dict_edges[('srl_tmp', 'srl_tmp2srl', 'srl')] = list_srl_tmp2srl  # lbl: [SRL_TMP2SRL]
+        if list_sent2query_multihop != []:
+            dict_edges[('sent', 'sent2query_multihop', 'query')] = list_sent2query_multihop
+        if list_query2sent_multihop != []:
+            dict_edges[('query', 'query2sent_multihop', 'sent')] = list_query2sent_multihop
+        if list_srl2query != []:
+            dict_edges[('srl', 'srl2query', 'query')] = list_srl2query
+        if list_query2srl != []:
+            dict_edges[('query', 'query2srl', 'srl')] = list_query2srl
         graph = dgl.heterograph(dict_edges)
         graph_metadata = dict()
         # doc metadata
@@ -846,8 +850,9 @@ class Dataset():
         graph_metadata['tok']['list_context_idx'] = np.array(list_token_context_idx).reshape(-1,1)
         graph_metadata['tok']['labels'] = np.array(list_token_lbl).reshape(-1,1)
         # query metadata
-        graph_metadata['query'] = dict()
-        graph_metadata['query']['st_end_idx'] =  np.array(list_query_st_end_idx)
+        if list_query_st_end_idx != []:
+            graph_metadata['query'] = dict()
+            graph_metadata['query']['st_end_idx'] =  np.array(list_query_st_end_idx)
 #         # doc metadata
 #         graph.nodes['doc'].data['st_end_idx'] =  np.array(list_doc_st_end_idx)
 #         graph.nodes['doc'].data['list_context_idx'] = np.array(list_doc_context_idx).reshape(-1,1)
@@ -1031,7 +1036,7 @@ class Dataset():
 # -
 
 
-train_dataset = Dataset(hotpot_train, list_hotpot_train_ner, dict_ins_doc_sent_srl_triples,
+train_dataset = Dataset(hotpot_train[0:20000], list_hotpot_train_ner, dict_ins_doc_sent_srl_triples,
                         dict_ins_query_srl_triples_training, list_ent_query_training, batch_size=1)
 list_graphs, list_g_metadata, list_context, list_list_srl_edges_metadata, list_span_idx = train_dataset.create_dataloader()
 
@@ -1058,11 +1063,27 @@ training_path = os.path.join(data_path, 'processed/training/heterog_20200826')
 training_graph_path = os.path.join(training_path, 'graphs')
 training_metadata_path = os.path.join(training_path, 'metadata')
 
-list_graph_metadata = list(zip(list_graphs, list_g_metadata))
-for i, (graph, metadata) in enumerate(tqdm(list_graph_metadata)):
-    graph = add_metadata2graph(graph, metadata)
-    f = os.path.join(training_graph_path, "graph" + str(i) + ".bin")
-    dgl.save_graphs(f, [graph])
+for i, g in enumerate(tqdm(list_graphs)):
+    with open(os.path.join(training_graph_path, "graph" + str(i) + ".bin"), "wb" ) as f:
+        pickle.dump(g, f)
+    with open( os.path.join(training_metadata_path, "metadata" + str(i) + ".bin"), "wb" ) as f:
+        pickle.dump(list_g_metadata[i], f)
+    # separate the metadata from the graph to store it (do not add metadata in the first place)
+    # weird problem if the metadata is inside the graph
+
+
+def natural_sort(l): 
+    convert = lambda text: int(text) if text.isdigit() else text.lower() 
+    alphanum_key = lambda key: [ convert(c) for c in re.split('([0-9]+)', key) ] 
+    return sorted(l, key = alphanum_key)
+
+
+# +
+# list_graph_metadata = list(zip(list_graphs, list_g_metadata))
+# for i, (graph, metadata) in enumerate(tqdm(list_graph_metadata)):
+#     graph = add_metadata2graph(graph, metadata)
+#     f = os.path.join(training_graph_path, "graph" + str(i) + ".bin")
+#     dgl.save_graphs(f, [graph])
 
 # +
 list_input_ids = [context['input_ids'] for context in list_context]
@@ -1117,11 +1138,12 @@ dev_path = os.path.join(data_path, 'processed/dev/heterog_20200826')
 dev_graph_path = os.path.join(dev_path, 'graphs')
 dev_metadata_path = os.path.join(dev_path, 'metadata')
 
-list_graph_metadata = list(zip(list_graphs, list_g_metadata))
-for i, (graph, metadata) in enumerate(tqdm(list_graph_metadata)):
-    graph = add_metadata2graph(graph, metadata)
-    f = os.path.join(dev_metadata_path, "graph" + str(i) + ".bin")
-    dgl.save_graphs(f, [graph])
+for i, g in enumerate(list_graphs):
+    with open(os.path.join(dev_graph_path, "graph" + str(i) + ".bin"), "wb" ) as f:
+        pickle.dump(g, f)
+    with open( os.path.join(dev_metadata_path, "metadata" + str(i) + ".bin"), "wb" ) as f:
+        pickle.dump(list_g_metadata[i], f)
+    # separate the metadata from the graph to store it (do not add metadata in the first place)
 
 torch.save(tensor_input_ids, os.path.join(dev_path, 'tensor_input_ids.p'))
 torch.save(tensor_token_type_ids, os.path.join(dev_path, 'tensor_token_type_ids.p'))
