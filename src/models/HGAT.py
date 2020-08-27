@@ -55,8 +55,8 @@ pretrained_weights = 'bert-base-cased'
 # ## Processing
 
 # %%
-training_path = os.path.join(data_path, "processed/training/heterog_20200815/")
-dev_path = os.path.join(data_path, "processed/dev/heterog_20200815/")
+training_path = os.path.join(data_path, "processed/training/heterog_20200826/")
+dev_path = os.path.join(data_path, "processed/dev/heterog_20200826/")
 
 with open(os.path.join(training_path, 'list_span_idx.p'), 'rb') as f:
     list_span_idx = pickle.load(f)
@@ -116,6 +116,36 @@ for (g_file, metadata_file) in tqdm(list_graph_metadata_files[0:20000]):
         graph = add_metadata2graph(graph, metadata)
         list_graphs.append(graph)
 
+# %%
+# training_graphs_path = os.path.join(training_path, 'graphs')
+# training_metadata_path = os.path.join(training_path, 'metadata')
+
+# list_graph_files = natural_sort([f for f in listdir(training_graphs_path) if isfile(join(training_graphs_path, f))])
+# list_metadata_files = natural_sort([f for f in listdir(training_metadata_path) if isfile(join(training_metadata_path, f))])
+# list_graph_metadata_files = list(zip(list_graph_files, list_metadata_files))
+
+# list_graphs = []
+# for (g_file, metadata_file) in tqdm(list_graph_metadata_files[0:200]):
+#     if ".bin" in g_file:
+#         f = os.path.join(training_graphs_path, g_file)
+#         graph = dgl.load_graphs(f)[0][0]
+#         list_graphs.append(graph)
+
+
+# %%
+# dev_graphs_path = os.path.join(dev_path, 'graphs/')
+# dev_metadata_path = os.path.join(dev_path, 'metadata/')
+
+# list_graph_files = natural_sort([f for f in listdir(dev_graphs_path) if isfile(join(dev_graphs_path, f))])
+# list_metadata_files = natural_sort([f for f in listdir(dev_metadata_path) if isfile(join(dev_metadata_path, f))])
+# list_graph_metadata_files = list(zip(list_graph_files, list_metadata_files))
+
+# dev_list_graphs = []
+# for (g_file, metadata_file) in tqdm(list_graph_metadata_files):
+#     if ".bin" in g_file:
+#         f = os.path.join(dev_graphs_path, g_file)
+#         graph = dgl.load_graphs(f)[0][0]
+#         dev_list_graphs.append(graph)
 
 # %%
 dev_graphs_path = os.path.join(dev_path, 'graphs/')
@@ -337,7 +367,6 @@ class HeteroRGCNLayer(nn.Module):
                 funcs[etype] = ((lambda e: self.message_func_srl(bert_token_emb, e)) , self.reduce_func)
             else:
                 funcs[etype] = (self.message_func_regular_node, self.reduce_func)
-
         G.multi_update_all(funcs, 'sum')
         out = None
         if self.residual:
@@ -478,7 +507,6 @@ class HGNModel(BertPreTrainedModel):
         assert not torch.isnan(sequence_output).any()
         # Graph forward & node classification
         graph_out, graph_emb = self.graph_forward(graph, sequence_output, train)
-        
         sequence_output = graph_emb['tok'].unsqueeze(0)
         # add graph info to the bert token embeddings
 #         sequence_output = self.fuse_tok_ent_srl(graph_emb['tok'], graph, graph_emb)
@@ -659,6 +687,8 @@ class HGNModel(BertPreTrainedModel):
                       for ntype in graph.ntypes if graph.number_of_nodes(ntype) > 0}
         for ntype in graph.ntypes:
             list_emb = []
+            if graph.number_of_nodes(ntype) == 0:
+                list_emb.append(torch.zeros((1,768), device=device))
             for (st, end) in graph.nodes[ntype].data['st_end_idx']:
                 list_emb.append(self.aggregate_emb(bert_context_emb[0][st:end]))
             graph_emb[ntype] = torch.stack(list_emb)
@@ -787,7 +817,8 @@ model.cuda()
 # for step, b_graph in enumerate(tqdm(list_graphs)):
 #     if not graph_for_eval(b_graph) or list_span_idx[step] == (-1, -1):
 #         continue
-#     model.zero_grad()  
+#     model.zero_grad()
+#     b_graph = b_graph.to(torch.device(device))
 #     # forward
 #     input_ids=tensor_input_ids[step].unsqueeze(0).to(device)
 #     attention_mask=tensor_attention_masks[step].unsqueeze(0).to(device)
@@ -803,7 +834,6 @@ model.cuda()
 
 # %%
 train_dataloader = list_graphs
-
 
 # %%
 lr = 1e-5
@@ -1216,7 +1246,7 @@ best_eval_f1 = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
 with neptune.create_experiment(name="HGAT", params=PARAMS, upload_source_files=['HGAT.py']):
-    neptune.append_tag(["No relation", "residual", "heterogenous", "wo_yn", "test"])
+    neptune.append_tag(["SRL relation", "Query node", "multihop edges", "residual", "heterogenous", "wo_yn", "test"])
     neptune.set_property('server', 'IRGPU2')
     neptune.set_property('training_set_path', training_path)
     neptune.set_property('dev_set_path', dev_path)
