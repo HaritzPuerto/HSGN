@@ -833,6 +833,9 @@ model.cuda()
 #                    end_positions=end_positions)
 
 # %%
+train_dataloader = list_graphs
+
+# %%
 lr = 1e-5
 optimizer = AdamW(model.parameters(),
                   lr = lr, # args.learning_rate - default is 5e-5, 
