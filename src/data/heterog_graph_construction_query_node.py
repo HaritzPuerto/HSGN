@@ -1033,12 +1033,9 @@ class Dataset():
         list_sent2query_multihop = list(set(list_sent2query_multihop))
         list_query2sent_multihop = list(set(list_query2sent_multihop))
         return list_ent_multihop, list_srl_multihop, list_sent_multihop, list_sent2query_multihop, list_query2sent_multihop
+
+
 # -
-
-
-train_dataset = Dataset(hotpot_train[0:20000], list_hotpot_train_ner, dict_ins_doc_sent_srl_triples,
-                        dict_ins_query_srl_triples_training, list_ent_query_training, batch_size=1)
-list_graphs, list_g_metadata, list_context, list_list_srl_edges_metadata, list_span_idx = train_dataset.create_dataloader()
 
 
 def add_metadata2graph(graph, metadata):
@@ -1047,6 +1044,10 @@ def add_metadata2graph(graph, metadata):
             graph.nodes[node].data[k] = torch.tensor(v)
     return graph
 
+
+train_dataset = Dataset(hotpot_train[0:20000], list_hotpot_train_ner, dict_ins_doc_sent_srl_triples,
+                        dict_ins_query_srl_triples_training, list_ent_query_training, batch_size=1)
+list_graphs, list_g_metadata, list_context, list_list_srl_edges_metadata, list_span_idx = train_dataset.create_dataloader()
 
 # +
 # edges = 0
