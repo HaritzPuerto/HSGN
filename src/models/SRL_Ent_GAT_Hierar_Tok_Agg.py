@@ -388,9 +388,9 @@ class HeteroRGCNLayer(nn.Module):
         nn.init.xavier_normal_(self.node_att.weight, gain=gain)
         for param in self.gru_node2tok.parameters():
             if len(param.shape) >= 2:
-                init.orthogonal_(param.data)
+                nn.init.orthogonal_(param.data)
             else:
-                init.normal_(param.data)
+                nn.init.normal_(param.data)
         
     def clean_memory(self, graph):
         # remove garbage from the graph computation
@@ -436,9 +436,9 @@ class HeteroRGCN(nn.Module):
     def init_params(self):
         for param in self.gru_layer_lvl.parameters():
             if len(param.shape) >= 2:
-                init.orthogonal_(param.data)
+                nn.init.orthogonal_(param.data)
             else:
-                init.normal_(param.data)
+                nn.init.normal_(param.data)
 
 
 # %%
