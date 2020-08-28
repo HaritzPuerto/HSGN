@@ -429,7 +429,7 @@ class HeteroRGCN(nn.Module):
 
 # %%
 dict_params = {'in_feats': 768, 'out_feats': 768, 'feat_drop': 0.1, 'attn_drop': 0.1, 'residual': True, 'hidden_size_classifier': 768,
-               'weight_sent_loss': 1, 'weight_srl_loss': 1, 'weight_ent_loss': 1,
+               'weight_srl_loss': 1, 'weight_ent_loss': 1,
                'weight_span_loss': 2, 'weight_ans_type_loss': 1, 
                'gat_layers': 2, 'etypes': graph.etypes}
 class HGNModel(BertPreTrainedModel):
@@ -481,7 +481,6 @@ class HGNModel(BertPreTrainedModel):
         # init weights
         self.init_weights()
         # params
-        self.weight_sent_loss = dict_params['weight_sent_loss']
         self.weight_srl_loss = dict_params['weight_srl_loss']
         self.weight_ent_loss = dict_params['weight_ent_loss']
         self.weight_span_loss = dict_params['weight_span_loss']
@@ -1250,15 +1249,12 @@ with neptune.create_experiment(name="40K Q-SRL-Ent Hierar. Tok. Node Aggreg. spa
             
             total_loss = output['loss']
             assert not torch.isnan(total_loss)
-            sent_loss = output['sent']['loss']
             ent_loss = output['ent']['loss']
             srl_loss = output['srl']['loss']
             #ans_type_loss = output['ans_type']['loss']
             span_loss = output['span']['loss']
             # neptune
             neptune.log_metric("total_loss", total_loss.detach().item())
-            if sent_loss is not None:
-                neptune.log_metric("sent_loss", sent_loss.detach().item())
             if srl_loss is not None:
                 neptune.log_metric("srl_loss", srl_loss.detach().item())
             if ent_loss is not None:    
