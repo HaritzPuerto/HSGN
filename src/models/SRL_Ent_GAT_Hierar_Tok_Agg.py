@@ -386,6 +386,11 @@ class HeteroRGCNLayer(nn.Module):
         gain = nn.init.calculate_gain('relu')
         nn.init.xavier_normal_(self.node_trans.weight, gain=gain)
         nn.init.xavier_normal_(self.node_att.weight, gain=gain)
+        for param in self.gru_node2tok.parameters():
+            if len(param.shape) >= 2:
+                init.orthogonal_(param.data)
+            else:
+                init.normal_(param.data)
         
     def clean_memory(self, graph):
         # remove garbage from the graph computation
@@ -410,6 +415,8 @@ class HeteroRGCN(nn.Module):
         self.layer2 = HeteroRGCNLayer(hidden_size, out_size, etypes, feat_drop, attn_drop, residual)
         self.gru_layer_lvl = nn.GRU(in_size, out_size)
         
+        self.init_params()
+        
     def forward(self, G, emb, bert_token_emb):
         h_tok0 = emb['tok'].view(1,-1,768)
         
@@ -425,6 +432,13 @@ class HeteroRGCN(nn.Module):
         tok_emb = self.gru_layer_lvl(gru_input, h_tok0)[0][-1].view(-1, 768)
         h_dict['tok'] = tok_emb
         return h_dict
+    
+    def init_params(self):
+        for param in self.gru_layer_lvl.parameters():
+            if len(param.shape) >= 2:
+                init.orthogonal_(param.data)
+            else:
+                init.normal_(param.data)
 
 
 # %%
@@ -1184,7 +1198,7 @@ model_path = '/workspace/ml-workspace/thesis_git/HSGN/models'
 best_eval_f1 = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="40K Q-SRL-Ent Hierar. Tok. Node Aggreg. span_lossx2", params=PARAMS, upload_source_files=['SRL_Ent_GAT_Hierar_Tok_Agg.py']):
+with neptune.create_experiment(name="40K Q-SRL-Ent Hierar. Tok. Node Aggreg. init GRU; span_lossx2", params=PARAMS, upload_source_files=['SRL_Ent_GAT_Hierar_Tok_Agg.py']):
     neptune.append_tag(["SRL relation", "Query node", "multihop edges", "residual", "heterogenous", "wo_yn", "test"])
     neptune.set_property('server', 'IRGPU5')
     neptune.set_property('training_set_path', training_path)
