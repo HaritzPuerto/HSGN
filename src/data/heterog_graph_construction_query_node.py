@@ -779,14 +779,14 @@ class Dataset():
                       ('ent', 'ent2srl', 'srl'): list_ent2srl,     # lbl: [ENT2SRL]
                       
                      # to token
-                     ('doc', 'doc2tok', 'tok'): list_doc2tok,     # lbl: [DOC2TOK]
-                     ('tok', 'tok2doc', 'doc'): list_tok2doc,     # lbl: [TOK2DOC]
-                     ('sent', 'sent2tok', 'tok'): list_sent2tok,  # lbl: [SENT2TOK]
-                     ('tok', 'tok2sent', 'sent'): list_tok2sent,  # lbl: [TOK2SENT]
+#                      ('doc', 'doc2tok', 'tok'): list_doc2tok,     # lbl: [DOC2TOK]
+#                      ('tok', 'tok2doc', 'doc'): list_tok2doc,     # lbl: [TOK2DOC]
+#                      ('sent', 'sent2tok', 'tok'): list_sent2tok,  # lbl: [SENT2TOK]
+#                      ('tok', 'tok2sent', 'sent'): list_tok2sent,  # lbl: [TOK2SENT]
                      ('srl', 'srl2tok', 'tok'): list_srl2tok,     # lbl: [SRL2TOK]
-                     ('tok', 'tok2srl', 'srl'): list_tok2srl,     # lbl: [TOK2SRL]
+#                      ('tok', 'tok2srl', 'srl'): list_tok2srl,     # lbl: [TOK2SRL]
                      ('ent', 'ent2tok', 'tok'): list_ent2tok,     # lbl: [ENT2TOK]
-                     ('tok', 'tok2ent', 'ent'): list_tok2ent,     # lbl: [TOK2ENT]
+#                      ('tok', 'tok2ent', 'ent'): list_tok2ent,     # lbl: [TOK2ENT]
                      # end hierarchical
                      # same-level edges
                      ('doc', 'doc2doc', 'doc'): list_doc2doc,         # lbl: [DOC2DOC_SELF]
@@ -1045,7 +1045,7 @@ def add_metadata2graph(graph, metadata):
     return graph
 
 
-train_dataset = Dataset(hotpot_train[0:20000], list_hotpot_train_ner, dict_ins_doc_sent_srl_triples,
+train_dataset = Dataset(hotpot_train[0:40000], list_hotpot_train_ner, dict_ins_doc_sent_srl_triples,
                         dict_ins_query_srl_triples_training, list_ent_query_training, batch_size=1)
 list_graphs, list_g_metadata, list_context, list_list_srl_edges_metadata, list_span_idx = train_dataset.create_dataloader()
 
@@ -1060,7 +1060,7 @@ for g_idx, list_dict_edge in enumerate(list_list_srl_edges_metadata):
     list_graphs[g_idx].edges['srl2srl'].data['rel_type'] = torch.tensor([edge['rel_type'] for edge in list_dict_edge])
     list_graphs[g_idx].edges['srl2srl'].data['span_idx'] = torch.tensor([edge['span_idx'] for edge in list_dict_edge])
 
-training_path = os.path.join(data_path, 'processed/training/heterog_20200826')
+training_path = os.path.join(data_path, 'processed/training/heterog_20200827')
 training_graph_path = os.path.join(training_path, 'graphs')
 training_metadata_path = os.path.join(training_path, 'metadata')
 
@@ -1135,7 +1135,7 @@ tensor_token_type_ids = torch.tensor(list_token_type_ids)
 tensor_attention_masks = torch.tensor(list_attention_masks)
 # -
 
-dev_path = os.path.join(data_path, 'processed/dev/heterog_20200826')
+dev_path = os.path.join(data_path, 'processed/dev/heterog_20200827')
 dev_graph_path = os.path.join(dev_path, 'graphs')
 dev_metadata_path = os.path.join(dev_path, 'metadata')
 
