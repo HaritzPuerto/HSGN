@@ -128,16 +128,18 @@ class Dataset():
         list_span_idx = []
         list_g_metadata = []
         list_list_srl_edges_metadata = []
+        list_list_ent2ent_metadata = []
         for ins_idx, hotpot_instance in enumerate(tqdm(self.dataset)):
             list_entities = self.list_hotpot_ner[ins_idx]
             dict_idx = list_dict_idx[ins_idx]
-            g, g_metadata, list_srl_edges_metadata, span_idx = self.create_graph(hotpot_instance, list_entities, dict_idx, list_context[ins_idx]['input_ids'], ins_idx)
+            g, g_metadata, list_srl_edges_metadata, list_ent2ent_metadata, span_idx = self.create_graph(hotpot_instance, list_entities, dict_idx, list_context[ins_idx]['input_ids'], ins_idx)
             self.build_tests(ins_idx, g, span_idx, hotpot_instance['answer'])
             list_graphs.append(g)
             list_span_idx.append(span_idx)
             list_g_metadata.append(g_metadata)
             list_list_srl_edges_metadata.append(list_srl_edges_metadata)
-        return list_graphs, list_g_metadata, list_context, list_list_srl_edges_metadata, list_span_idx
+            list_list_ent2ent_metadata.append(list_ent2ent_metadata)
+        return list_graphs, list_g_metadata, list_context, list_list_srl_edges_metadata, list_list_ent2ent_metadata, list_span_idx
 
     def build_tests(self, ins_idx, g, span_idx, ans):
         #print(ins_idx, span_idx)
@@ -771,6 +773,10 @@ class Dataset():
                                                           90)
         # make the heterogenous graph
         list_srl2self = [(v, v) for v in range(srl_node_idx)]
+        # create ent rel using SRL predicates
+        list_ent2ent_rel, list_ent2ent_metadata = self.compute_ent_relations(list_srl2srl, 
+                                                                             list_srl2ent, 
+                                                                             list_srl_rel)
         dict_edges = {('doc', 'doc2sent', 'sent'): list_doc2sent,  # lbl: [DOC2SENT]
                      ('sent', 'sent2doc', 'doc'): list_sent2doc,  # lbl: [SENT2DOC]
                      ('sent', 'sent2srl', 'srl'): list_sent2srl,  # lbl: [SENT2SRL]
@@ -794,6 +800,7 @@ class Dataset():
                      ('srl', 'srl2srl', 'srl'): list_srl2srl,         # lbl: [SRL2SRL]
                      ('srl', 'srl2self', 'srl'): list_srl2self,         # lbl: [SRL2SELF]
                      ('ent', 'ent2ent_self', 'ent'): list_ent2ent_self,         # lbl: [ENT2ENT_SELF]
+                     ('ent', 'ent2ent_rel', 'ent'): list_ent2ent_rel,
                      ('tok', 'token2token_self', 'tok'): list_token2token, # lbl: [TOK2TOK_SELF]
                      # multi-hop edges
                      ('ent', 'ent_multihop', 'ent'): list_ent_multihop,
@@ -874,9 +881,33 @@ class Dataset():
 #         graph.nodes['tok'].data['list_context_idx'] = np.array(list_token_context_idx).reshape(-1,1)
 #         graph.nodes['tok'].data['labels'] = np.array(list_token_lbl).reshape(-1,1)
         
-        return graph, graph_metadata, list_srl_rel, (ans_st_idx, ans_end_idx)
+        return graph, graph_metadata, list_srl_rel, list_ent2ent_metadata, (ans_st_idx, ans_end_idx)
 
-    
+    def compute_ent_relations(self, list_srl2srl, list_srl2ent, list_srl_rel_metadata):
+        # aux data structure
+        dict_srl2ent = dict()
+        for (srl, e) in list_srl2ent:
+            if srl in dict_srl2ent:
+                dict_srl2ent[srl].append(e)
+            else:
+                dict_srl2ent[srl] = [e]
+        # algorithm starts here
+        # for each srl rel, look for their children and inherit that relation
+        list_ent_rel = []
+        list_ent_rel_metadata = []
+        for i, (srl1, srl2) in enumerate(list_srl2srl):
+            if srl1 not in dict_srl2ent:
+                continue
+            if srl2 not in dict_srl2ent:
+                continue
+            list_e1 = dict_srl2ent[srl1]
+            list_e2 = dict_srl2ent[srl2]
+            for e1 in list_e1:
+                for e2 in list_e2:
+                    list_ent_rel.append((e1,e2))
+                    list_ent_rel_metadata.append(list_srl_rel_metadata[i])
+        return list_ent_rel, list_ent_rel_metadata
+        
     def srl_with_ans(self, srl_arg: str, ans:str, in_supp_sent: bool) -> bool:
         return (in_supp_sent and ans != "yes" and ans != "no" and
                 ((ans in srl_arg) or (ans[:-1] in srl_arg) or (fuzz.token_set_ratio(srl_arg, ans) >= 90)))
@@ -1047,20 +1078,46 @@ def add_metadata2graph(graph, metadata):
 
 train_dataset = Dataset(hotpot_train[0:40000], list_hotpot_train_ner, dict_ins_doc_sent_srl_triples,
                         dict_ins_query_srl_triples_training, list_ent_query_training, batch_size=1)
-list_graphs, list_g_metadata, list_context, list_list_srl_edges_metadata, list_span_idx = train_dataset.create_dataloader()
+(list_graphs, 
+ list_g_metadata,
+ list_context,
+ list_list_srl_edges_metadata,
+ list_list_ent2ent_metadata,
+ list_span_idx) = train_dataset.create_dataloader()
+
+
+def print_ent_rel():
+    (list_u, list_v, _) = list_graphs[0].all_edges(form='all', etype='ent2ent_rel')
+    for i, u in enumerate(list_u):
+        st = list_g_metadata[0]['ent']['st_end_idx'][u][0]
+        end = list_g_metadata[0]['ent']['st_end_idx'][u][1]
+        st_v = list_g_metadata[0]['ent']['st_end_idx'][list_v[i]][0]
+        end_v = list_g_metadata[0]['ent']['st_end_idx'][list_v[i]][1]
+        # rel
+        st_r, end_r = list_list_ent2ent_metadata[0][i]['span_idx']
+        r_type = list_list_ent2ent_metadata[0][i]['rel_type']
+        print(train_dataset.tokenizer.decode(list_context[0]['input_ids'][st:end]), ", ", 
+             r_type, train_dataset.tokenizer.decode(list_context[0]['input_ids'][st_r:end_r]), ", ",
+             train_dataset.tokenizer.decode(list_context[0]['input_ids'][st_v:end_v]))
+
 
 # +
 # edges = 0
 # for g in list_graphs:
 #     edges += g.number_of_edges('ent2ent_multihop')
 # print(edges/len(list_graphs)/2) # divided by two because edges are bidirectional
+
+# +
+# for g_idx, list_dict_edge in enumerate(list_list_srl_edges_metadata):
+#     list_graphs[g_idx].edges['srl2srl'].data['rel_type'] = torch.tensor([edge['rel_type'] for edge in list_dict_edge])
+#     list_graphs[g_idx].edges['srl2srl'].data['span_idx'] = torch.tensor([edge['span_idx'] for edge in list_dict_edge])
 # -
 
-for g_idx, list_dict_edge in enumerate(list_list_srl_edges_metadata):
-    list_graphs[g_idx].edges['srl2srl'].data['rel_type'] = torch.tensor([edge['rel_type'] for edge in list_dict_edge])
-    list_graphs[g_idx].edges['srl2srl'].data['span_idx'] = torch.tensor([edge['span_idx'] for edge in list_dict_edge])
+for g_idx, list_dict_edge in enumerate(list_list_ent2ent_metadata):
+    list_graphs[g_idx].edges['ent2ent_rel'].data['rel_type'] = torch.tensor([edge['rel_type'] for edge in list_dict_edge])
+    list_graphs[g_idx].edges['ent2ent_rel'].data['span_idx'] = torch.tensor([edge['span_idx'] for edge in list_dict_edge])
 
-training_path = os.path.join(data_path, 'processed/training/heterog_20200827')
+training_path = os.path.join(data_path, 'processed/training/heterog_20200829_ent_rel')
 training_graph_path = os.path.join(training_path, 'graphs')
 training_metadata_path = os.path.join(training_path, 'metadata')
 
@@ -1121,11 +1178,20 @@ print("Dev data loaded")
 # +
 dev_dataset = Dataset(hotpot_dev, list_hotpot_dev_ner, dict_ins_doc_sent_srl_triples_dev,
                       dict_ins_query_srl_triples_dev, list_ent_query_dev, batch_size=1)
-list_graphs, list_g_metadata, list_context, list_list_srl_edges_metadata, list_span_idx = dev_dataset.create_dataloader()
+(list_graphs, 
+ list_g_metadata,
+ list_context,
+ list_list_srl_edges_metadata,
+ list_list_ent2ent_metadata,
+ list_span_idx) = dev_dataset.create_dataloader()
 
-for g_idx, list_dict_edge in enumerate(list_list_srl_edges_metadata):
-    list_graphs[g_idx].edges['srl2srl'].data['rel_type'] = torch.tensor([edge['rel_type'] for edge in list_dict_edge])
-    list_graphs[g_idx].edges['srl2srl'].data['span_idx'] = torch.tensor([edge['span_idx'] for edge in list_dict_edge])
+# for g_idx, list_dict_edge in enumerate(list_list_srl_edges_metadata):
+#     list_graphs[g_idx].edges['srl2srl'].data['rel_type'] = torch.tensor([edge['rel_type'] for edge in list_dict_edge])
+#     list_graphs[g_idx].edges['srl2srl'].data['span_idx'] = torch.tensor([edge['span_idx'] for edge in list_dict_edge])
+
+for g_idx, list_dict_edge in enumerate(list_list_ent2ent_metadata):
+    list_graphs[g_idx].edges['ent2ent_rel'].data['rel_type'] = torch.tensor([edge['rel_type'] for edge in list_dict_edge])
+    list_graphs[g_idx].edges['ent2ent_rel'].data['span_idx'] = torch.tensor([edge['span_idx'] for edge in list_dict_edge])
 
 list_input_ids = [context['input_ids'] for context in list_context]
 list_token_type_ids = [context['token_type_ids'] for context in list_context]
@@ -1135,7 +1201,7 @@ tensor_token_type_ids = torch.tensor(list_token_type_ids)
 tensor_attention_masks = torch.tensor(list_attention_masks)
 # -
 
-dev_path = os.path.join(data_path, 'processed/dev/heterog_20200827')
+dev_path = os.path.join(data_path, 'processed/dev/heterog_20200829_ent_rel')
 dev_graph_path = os.path.join(dev_path, 'graphs')
 dev_metadata_path = os.path.join(dev_path, 'metadata')
 
