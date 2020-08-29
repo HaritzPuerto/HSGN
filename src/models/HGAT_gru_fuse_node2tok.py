@@ -106,7 +106,7 @@ list_metadata_files = natural_sort([f for f in listdir(training_metadata_path) i
 list_graph_metadata_files = list(zip(list_graph_files, list_metadata_files))
 
 list_graphs = []
-for (g_file, metadata_file) in tqdm(list_graph_metadata_files[0:400]):
+for (g_file, metadata_file) in tqdm(list_graph_metadata_files[0:40000]):
     if ".bin" in g_file:
         with open(os.path.join(training_graphs_path, g_file), "rb") as f:
             graph = pickle.load(f)
@@ -156,7 +156,7 @@ list_metadata_files = natural_sort([f for f in listdir(dev_metadata_path) if isf
 list_graph_metadata_files = list(zip(list_graph_files, list_metadata_files))
 
 dev_list_graphs = []
-for (g_file, metadata_file) in tqdm(list_graph_metadata_files[0:400]):
+for (g_file, metadata_file) in tqdm(list_graph_metadata_files):
     if ".bin" in g_file:
         with open(os.path.join(dev_graphs_path, g_file), "rb") as f:
             graph = pickle.load(f)
