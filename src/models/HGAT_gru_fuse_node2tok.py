@@ -55,8 +55,8 @@ pretrained_weights = 'bert-base-cased'
 # ## Processing
 
 # %%
-training_path = os.path.join(data_path, "processed/training/heterog_20200827/")
-dev_path = os.path.join(data_path, "processed/dev/heterog_20200827/")
+training_path = os.path.join(data_path, "processed/training/heterog_20200829_ent_rel/")
+dev_path = os.path.join(data_path, "processed/dev/heterog_20200829_ent_rel/")
 
 with open(os.path.join(training_path, 'list_span_idx.p'), 'rb') as f:
     list_span_idx = pickle.load(f)
@@ -106,7 +106,7 @@ list_metadata_files = natural_sort([f for f in listdir(training_metadata_path) i
 list_graph_metadata_files = list(zip(list_graph_files, list_metadata_files))
 
 list_graphs = []
-for (g_file, metadata_file) in tqdm(list_graph_metadata_files[0:40000]):
+for (g_file, metadata_file) in tqdm(list_graph_metadata_files[0:400]):
     if ".bin" in g_file:
         with open(os.path.join(training_graphs_path, g_file), "rb") as f:
             graph = pickle.load(f)
@@ -156,7 +156,7 @@ list_metadata_files = natural_sort([f for f in listdir(dev_metadata_path) if isf
 list_graph_metadata_files = list(zip(list_graph_files, list_metadata_files))
 
 dev_list_graphs = []
-for (g_file, metadata_file) in tqdm(list_graph_metadata_files):
+for (g_file, metadata_file) in tqdm(list_graph_metadata_files[0:400]):
     if ".bin" in g_file:
         with open(os.path.join(dev_graphs_path, g_file), "rb") as f:
             graph = pickle.load(f)
@@ -291,7 +291,7 @@ class HeteroRGCNLayer(nn.Module):
         self.reset_parameters()
 
 
-    def message_func_srl(self, bert_token_emb, edges):
+    def message_func_rel(self, bert_token_emb, edges):
         '''
         m_ij = R_ji * W * h_j
         '''
@@ -365,7 +365,9 @@ class HeteroRGCNLayer(nn.Module):
             if "2tok" in etype:     
                 pass
             elif "srl2srl" == etype:
-                funcs[etype] = ((lambda e: self.message_func_srl(bert_token_emb, e)) , self.reduce_func)
+                pass
+            elif "ent2ent_rel" == etype:
+                funcs[etype] = ((lambda e: self.message_func_rel(bert_token_emb, e)) , self.reduce_func)
             else:
                 funcs[etype] = (self.message_func_regular_node, self.reduce_func)
         G.multi_update_all(funcs, 'sum')
@@ -396,9 +398,12 @@ class HeteroRGCNLayer(nn.Module):
         """Reinitialize learnable parameters."""
         gain = nn.init.calculate_gain('relu')
         nn.init.xavier_normal_(self.node_trans.weight, gain=gain)
-        nn.init.xavier_normal_(self.tok_trans.weight, gain=gain)
-        nn.init.xavier_normal_(self.tok_att.weight, gain=gain)
         nn.init.xavier_normal_(self.node_att.weight, gain=gain)
+        for param in self.gru_node2tok.parameters():
+            if len(param.shape) >= 2:
+                nn.init.orthogonal_(param.data)
+            else:
+                nn.init.normal_(param.data)
         
     def clean_memory(self, graph):
         # remove garbage from the graph computation
@@ -423,6 +428,8 @@ class HeteroRGCN(nn.Module):
         self.layer2 = HeteroRGCNLayer(hidden_size, out_size, etypes, feat_drop, attn_drop, residual)
         self.gru_layer_lvl = nn.GRU(in_size, out_size)
         
+        self.init_params()
+        
     def forward(self, G, emb, bert_token_emb):
         h_tok0 = emb['tok'].view(1,-1,768)
         
@@ -438,6 +445,13 @@ class HeteroRGCN(nn.Module):
         tok_emb = self.gru_layer_lvl(gru_input, h_tok0)[0][-1].view(-1, 768)
         h_dict['tok'] = tok_emb
         return h_dict
+    
+    def init_params(self):
+        for param in self.gru_layer_lvl.parameters():
+            if len(param.shape) >= 2:
+                nn.init.orthogonal_(param.data)
+            else:
+                nn.init.normal_(param.data)
 
 
 # %%
@@ -1266,8 +1280,8 @@ model_path = '/workspace/ml-workspace/thesis_git/HSGN/models'
 best_eval_f1 = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="40K GRU fuse timestep and aggreg. span_lossx2", params=PARAMS, upload_source_files=['HGAT_gru_fuse_node2tok.py']):
-    neptune.append_tag(["SRL relation", "Query node", "multihop edges", "residual", "heterogenous", "wo_yn", "test"])
+with neptune.create_experiment(name="40K ent rel & Hierar. Tok. Aggr.  span_lossx2", params=PARAMS, upload_source_files=['HGAT_gru_fuse_node2tok.py']):
+    neptune.append_tag(["ent relation", "no SRL rel", "Query node", "multihop edges", "residual", "heterogenous", "wo_yn", "test"])
     neptune.set_property('server', 'IRGPU5')
     neptune.set_property('training_set_path', training_path)
     neptune.set_property('dev_set_path', dev_path)
