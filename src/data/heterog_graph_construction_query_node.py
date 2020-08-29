@@ -1183,7 +1183,7 @@ dev_dataset = Dataset(hotpot_dev, list_hotpot_dev_ner, dict_ins_doc_sent_srl_tri
  list_context,
  list_list_srl_edges_metadata,
  list_list_ent2ent_metadata,
- list_span_idx= dev_dataset.create_dataloader()
+ list_span_idx) = dev_dataset.create_dataloader()
 
 # for g_idx, list_dict_edge in enumerate(list_list_srl_edges_metadata):
 #     list_graphs[g_idx].edges['srl2srl'].data['rel_type'] = torch.tensor([edge['rel_type'] for edge in list_dict_edge])
