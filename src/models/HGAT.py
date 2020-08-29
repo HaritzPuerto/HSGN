@@ -55,8 +55,8 @@ pretrained_weights = 'bert-base-cased'
 # ## Processing
 
 # %%
-training_path = os.path.join(data_path, "processed/training/heterog_20200826/")
-dev_path = os.path.join(data_path, "processed/dev/heterog_20200826/")
+training_path = os.path.join(data_path, "processed/training/heterog_20200829_ent_rel/")
+dev_path = os.path.join(data_path, "processed/dev/heterog_20200829_ent_rel/")
 
 with open(os.path.join(training_path, 'list_span_idx.p'), 'rb') as f:
     list_span_idx = pickle.load(f)
@@ -289,7 +289,7 @@ class HeteroRGCNLayer(nn.Module):
         self.reset_parameters()
 
 
-    def message_func_srl(self, bert_token_emb, edges):
+    def message_func_rel(self, bert_token_emb, edges):
         '''
         m_ij = R_ji * W * h_j
         '''
@@ -363,8 +363,10 @@ class HeteroRGCNLayer(nn.Module):
                 G.nodes[srctype].data['resid'] = feat_dict[srctype]
             if "2tok" in etype:                
                 funcs[etype] = (self.message_func_2tok, self.reduce_func_2tok)
-            elif "srl2srl" == etype:
-                funcs[etype] = ((lambda e: self.message_func_srl(bert_token_emb, e)) , self.reduce_func)
+#             elif "srl2srl" == etype:
+#                 funcs[etype] = ((lambda e: self.message_func_rel(bert_token_emb, e)) , self.reduce_func)
+            elif "ent2ent_rel" == etype:
+                funcs[etype] = ((lambda e: self.message_func_rel(bert_token_emb, e)) , self.reduce_func)
             else:
                 funcs[etype] = (self.message_func_regular_node, self.reduce_func)
         G.multi_update_all(funcs, 'sum')
@@ -818,7 +820,6 @@ model.cuda()
 #     if not graph_for_eval(b_graph) or list_span_idx[step] == (-1, -1):
 #         continue
 #     model.zero_grad()
-#     b_graph = b_graph.to(torch.device(device))
 #     # forward
 #     input_ids=tensor_input_ids[step].unsqueeze(0).to(device)
 #     attention_mask=tensor_attention_masks[step].unsqueeze(0).to(device)
