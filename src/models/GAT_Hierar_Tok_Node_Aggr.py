@@ -857,22 +857,22 @@ model.cuda()
 # 
 
 # %%
-for step, b_graph in enumerate(tqdm(list_graphs)):
-    if not graph_for_eval(b_graph) or list_span_idx[step] == (-1, -1):
-        continue
-    model.zero_grad()
-    # forward
-    input_ids=tensor_input_ids[step].unsqueeze(0).to(device)
-    attention_mask=tensor_attention_masks[step].unsqueeze(0).to(device)
-    token_type_ids=tensor_token_type_ids[step].unsqueeze(0).to(device) 
-    start_positions=torch.tensor([list_span_idx[step][0]], device='cuda')
-    end_positions=torch.tensor([list_span_idx[step][1]], device='cuda')
-    output = model(b_graph,
-                   input_ids=input_ids,
-                   attention_mask=attention_mask,
-                   token_type_ids=token_type_ids, 
-                   start_positions=start_positions,
-                   end_positions=end_positions)
+# for step, b_graph in enumerate(tqdm(list_graphs)):
+#     if not graph_for_eval(b_graph) or list_span_idx[step] == (-1, -1):
+#         continue
+#     model.zero_grad()
+#     # forward
+#     input_ids=tensor_input_ids[step].unsqueeze(0).to(device)
+#     attention_mask=tensor_attention_masks[step].unsqueeze(0).to(device)
+#     token_type_ids=tensor_token_type_ids[step].unsqueeze(0).to(device) 
+#     start_positions=torch.tensor([list_span_idx[step][0]], device='cuda')
+#     end_positions=torch.tensor([list_span_idx[step][1]], device='cuda')
+#     output = model(b_graph,
+#                    input_ids=input_ids,
+#                    attention_mask=attention_mask,
+#                    token_type_ids=token_type_ids, 
+#                    start_positions=start_positions,
+#                    end_positions=end_positions)
 
 # %%
 train_dataloader = list_graphs
