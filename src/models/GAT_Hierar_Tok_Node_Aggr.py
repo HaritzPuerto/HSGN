@@ -719,22 +719,21 @@ class HGNModel(BertPreTrainedModel):
             - graph
             - bert_context_emb shape [1, #max len, 768]
         '''
+        input_gru = bert_context_emb[0].view(-1, 1, 768)
+        encoder_output, encoder_hidden = self.bigru(input_gru)
+        encoder_output = encoder_output.view(-1, 768*2)
         graph_emb = {ntype : nn.Parameter(torch.Tensor(graph.number_of_nodes(ntype), 768))
                       for ntype in graph.ntypes if graph.number_of_nodes(ntype) > 0}
         for ntype in graph.ntypes:
             list_emb = []
             for (st, end) in graph.nodes[ntype].data['st_end_idx']:
-                list_emb.append(self.aggregate_emb(bert_context_emb[0][st:end]))
+                list_emb.append(self.aggregate_emb(encoder_output[st:end]))
             graph_emb[ntype] = torch.stack(list_emb)
         return graph_emb
     
-    def aggregate_emb(self, token_emb):
-        # average for now
-        input_gru = token_emb.view(-1, 1, 768)
-        encoder_output, encoder_hidden = self.bigru(input_gru)
-        # get first and last output         
-        left2right = encoder_output[-1, :, :768].view(-1, 768)
-        right2left = encoder_output[0, :, 768:].view(-1, 768)
+    def aggregate_emb(self, encoder_output):      
+        left2right = encoder_output[-1, :768].view(-1, 768)
+        right2left = encoder_output[0, 768:].view(-1, 768)
         # concat
         concat_both_dir = torch.cat((left2right, right2left), dim=1)
         # create the emb
@@ -858,22 +857,22 @@ model.cuda()
 # 
 
 # %%
-# for step, b_graph in enumerate(tqdm(list_graphs)):
-#     if not graph_for_eval(b_graph) or list_span_idx[step] == (-1, -1):
-#         continue
-#     model.zero_grad()
-#     # forward
-#     input_ids=tensor_input_ids[step].unsqueeze(0).to(device)
-#     attention_mask=tensor_attention_masks[step].unsqueeze(0).to(device)
-#     token_type_ids=tensor_token_type_ids[step].unsqueeze(0).to(device) 
-#     start_positions=torch.tensor([list_span_idx[step][0]], device='cuda')
-#     end_positions=torch.tensor([list_span_idx[step][1]], device='cuda')
-#     output = model(b_graph,
-#                    input_ids=input_ids,
-#                    attention_mask=attention_mask,
-#                    token_type_ids=token_type_ids, 
-#                    start_positions=start_positions,
-#                    end_positions=end_positions)
+for step, b_graph in enumerate(tqdm(list_graphs)):
+    if not graph_for_eval(b_graph) or list_span_idx[step] == (-1, -1):
+        continue
+    model.zero_grad()
+    # forward
+    input_ids=tensor_input_ids[step].unsqueeze(0).to(device)
+    attention_mask=tensor_attention_masks[step].unsqueeze(0).to(device)
+    token_type_ids=tensor_token_type_ids[step].unsqueeze(0).to(device) 
+    start_positions=torch.tensor([list_span_idx[step][0]], device='cuda')
+    end_positions=torch.tensor([list_span_idx[step][1]], device='cuda')
+    output = model(b_graph,
+                   input_ids=input_ids,
+                   attention_mask=attention_mask,
+                   token_type_ids=token_type_ids, 
+                   start_positions=start_positions,
+                   end_positions=end_positions)
 
 # %%
 train_dataloader = list_graphs
