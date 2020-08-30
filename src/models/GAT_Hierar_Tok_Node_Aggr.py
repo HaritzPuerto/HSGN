@@ -730,18 +730,17 @@ class HGNModel(BertPreTrainedModel):
     
     def aggregate_emb(self, token_emb):
         # average for now
-#         input_gru = token_emb.view(-1, 1, 768)
-#         encoder_output, encoder_hidden = self.bigru(input_gru)
-#         # get first and last output         
-#         left2right = encoder_output[-1, :, :768].view(-1, 768)
-#         right2left = encoder_output[0, :, 768:].view(-1, 768)
-#         # concat
-#         concat_both_dir = torch.cat((left2right, right2left), dim=1)
-#         # create the emb
-#         emb = self.gru_aggregation(concat_both_dir)
-#         print(emb.shape)
-#         return emb 
-        return torch.mean(token_emb, dim = 0)
+        input_gru = token_emb.view(-1, 1, 768)
+        encoder_output, encoder_hidden = self.bigru(input_gru)
+        # get first and last output         
+        left2right = encoder_output[-1, :, :768].view(-1, 768)
+        right2left = encoder_output[0, :, 768:].view(-1, 768)
+        # concat
+        concat_both_dir = torch.cat((left2right, right2left), dim=1)
+        # create the emb
+        emb = self.gru_aggregation(concat_both_dir).squeeze(0)
+        return emb 
+#         return torch.mean(token_emb, dim = 0)
     
     def sample_sent_nodes(self, graph):
         list_sent_nodes = graph.nodes('sent')
@@ -1287,9 +1286,9 @@ model_path = '/workspace/ml-workspace/thesis_git/HSGN/models'
 best_eval_f1 = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="Bottom-up 40K ent rel & Hierar. Tok. Aggr.  span_lossx2", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
-    neptune.append_tag(["ent relation", "no SRL rel", "Query node", "multihop edges", "residual", "heterogenous", "wo_yn", "test"])
-    neptune.set_property('server', 'IRGPU2')
+with neptune.create_experiment(name="BriGRU initial emb Bottom-up 40K ent rel & Hierar. Tok. Aggr.  span_lossx2", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
+    neptune.append_tag(["bigru initial emb", "bottom-up", "ent relation", "no SRL rel", "Query node", "multihop edges", "residual", "heterogenous", "wo_yn", "test"])
+    neptune.set_property('server', 'IRGPU5')
     neptune.set_property('training_set_path', training_path)
     neptune.set_property('dev_set_path', dev_path)
 
