@@ -55,8 +55,8 @@ pretrained_weights = 'bert-base-cased'
 # ## Processing
 
 # %%
-training_path = os.path.join(data_path, "processed/training/heterog_20200829_ent_rel/")
-dev_path = os.path.join(data_path, "processed/dev/heterog_20200829_ent_rel/")
+training_path = os.path.join(data_path, "processed/training/heterog_20200830_bottomup/")
+dev_path = os.path.join(data_path, "processed/dev/heterog_20200830_bottomup/")
 
 with open(os.path.join(training_path, 'list_span_idx.p'), 'rb') as f:
     list_span_idx = pickle.load(f)
@@ -469,6 +469,11 @@ class HGNModel(BertPreTrainedModel):
 #         self.gat = GAT(dict_params['gat_layers'], dict_params['in_feats'], dict_params['in_feats'], dict_params['out_feats'],
 #                            2, feat_drop = dict_params['feat_drop'],
 #                            attn_drop = dict_params['attn_drop'])
+        # Initial Node Embedding
+        self.bigru = nn.GRU(dict_params['in_feats'], dict_params['in_feats'], 
+                                    dropout = dict_params['feat_drop'], bidirectional=True)
+        self.gru_aggregation = nn.Linear(2*dict_params['in_feats'], dict_params['in_feats'])
+        # Graph Neural Network
         self.rgcn = HeteroRGCN(dict_params['etypes'], 768, 768, 768, dict_params['feat_drop'], dict_params['attn_drop'], dict_params['residual'])
         ## node classification
         ### ent node
@@ -504,12 +509,6 @@ class HGNModel(BertPreTrainedModel):
 #                                                            nn.ReLU(),
 #                                                  nn.Linear(int(dict_params['hidden_size_classifier']/2),
 #                                                            3))
-        
-        self.fuse_tok_srl_ent = nn.Sequential(nn.Linear(3*dict_params['out_feats'],
-                                                        dict_params['out_feats']),
-                                              nn.ReLU(),
-                                              nn.Linear(dict_params['out_feats'],
-                                                        dict_params['out_feats']))
         # init weights
         self.init_weights()
         # params
@@ -720,20 +719,27 @@ class HGNModel(BertPreTrainedModel):
             - graph
             - bert_context_emb shape [1, #max len, 768]
         '''
+        input_gru = bert_context_emb[0].view(-1, 1, 768)
+        encoder_output, encoder_hidden = self.bigru(input_gru)
+        encoder_output = encoder_output.view(-1, 768*2)
         graph_emb = {ntype : nn.Parameter(torch.Tensor(graph.number_of_nodes(ntype), 768))
                       for ntype in graph.ntypes if graph.number_of_nodes(ntype) > 0}
         for ntype in graph.ntypes:
             list_emb = []
-            if graph.number_of_nodes(ntype) == 0:
-                list_emb.append(torch.zeros((1,768), device=device))
             for (st, end) in graph.nodes[ntype].data['st_end_idx']:
-                list_emb.append(self.aggregate_emb(bert_context_emb[0][st:end]))
+                list_emb.append(self.aggregate_emb(encoder_output[st:end]))
             graph_emb[ntype] = torch.stack(list_emb)
         return graph_emb
     
-    def aggregate_emb(self, token_emb):
-        # average for now
-        return torch.mean(token_emb, dim = 0)
+    def aggregate_emb(self, encoder_output):      
+        left2right = encoder_output[-1, :768].view(-1, 768)
+        right2left = encoder_output[0, 768:].view(-1, 768)
+        # concat
+        concat_both_dir = torch.cat((left2right, right2left), dim=1)
+        # create the emb
+        emb = self.gru_aggregation(concat_both_dir).squeeze(0)
+        return emb 
+#         return torch.mean(token_emb, dim = 0)
     
     def sample_sent_nodes(self, graph):
         list_sent_nodes = graph.nodes('sent')
@@ -851,23 +857,22 @@ model.cuda()
 # 
 
 # %%
-# for step, b_graph in enumerate(tqdm(list_graphs)):
-#     if not graph_for_eval(b_graph) or list_span_idx[step] == (-1, -1):
-#         continue
-#     model.zero_grad()
-#     b_graph = b_graph.to(torch.device(device))
-#     # forward
-#     input_ids=tensor_input_ids[step].unsqueeze(0).to(device)
-#     attention_mask=tensor_attention_masks[step].unsqueeze(0).to(device)
-#     token_type_ids=tensor_token_type_ids[step].unsqueeze(0).to(device) 
-#     start_positions=torch.tensor([list_span_idx[step][0]], device='cuda')
-#     end_positions=torch.tensor([list_span_idx[step][1]], device='cuda')
-#     output = model(b_graph,
-#                    input_ids=input_ids,
-#                    attention_mask=attention_mask,
-#                    token_type_ids=token_type_ids, 
-#                    start_positions=start_positions,
-#                    end_positions=end_positions)
+for step, b_graph in enumerate(tqdm(list_graphs)):
+    if not graph_for_eval(b_graph) or list_span_idx[step] == (-1, -1):
+        continue
+    model.zero_grad()
+    # forward
+    input_ids=tensor_input_ids[step].unsqueeze(0).to(device)
+    attention_mask=tensor_attention_masks[step].unsqueeze(0).to(device)
+    token_type_ids=tensor_token_type_ids[step].unsqueeze(0).to(device) 
+    start_positions=torch.tensor([list_span_idx[step][0]], device='cuda')
+    end_positions=torch.tensor([list_span_idx[step][1]], device='cuda')
+    output = model(b_graph,
+                   input_ids=input_ids,
+                   attention_mask=attention_mask,
+                   token_type_ids=token_type_ids, 
+                   start_positions=start_positions,
+                   end_positions=end_positions)
 
 # %%
 train_dataloader = list_graphs
@@ -1280,8 +1285,8 @@ model_path = '/workspace/ml-workspace/thesis_git/HSGN/models'
 best_eval_f1 = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="40K ent rel & Hierar. Tok. Aggr.  span_lossx2", params=PARAMS, upload_source_files=['HGAT_gru_fuse_node2tok.py']):
-    neptune.append_tag(["ent relation", "no SRL rel", "Query node", "multihop edges", "residual", "heterogenous", "wo_yn", "test"])
+with neptune.create_experiment(name="BriGRU initial emb Bottom-up 40K ent rel & Hierar. Tok. Aggr.  span_lossx2", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
+    neptune.append_tag(["bigru initial emb", "bottom-up", "ent relation", "no SRL rel", "Query node", "multihop edges", "residual", "heterogenous", "wo_yn", "test"])
     neptune.set_property('server', 'IRGPU5')
     neptune.set_property('training_set_path', training_path)
     neptune.set_property('dev_set_path', dev_path)
