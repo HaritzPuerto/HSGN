@@ -55,8 +55,8 @@ pretrained_weights = 'bert-base-cased'
 # ## Processing
 
 # %%
-training_path = os.path.join(data_path, "processed/training/heterog_20200829_ent_rel/")
-dev_path = os.path.join(data_path, "processed/dev/heterog_20200829_ent_rel/")
+training_path = os.path.join(data_path, "processed/training/heterog_20200830_bottomup/")
+dev_path = os.path.join(data_path, "processed/dev/heterog_20200830_bottomup/")
 
 with open(os.path.join(training_path, 'list_span_idx.p'), 'rb') as f:
     list_span_idx = pickle.load(f)
@@ -106,7 +106,7 @@ list_metadata_files = natural_sort([f for f in listdir(training_metadata_path) i
 list_graph_metadata_files = list(zip(list_graph_files, list_metadata_files))
 
 list_graphs = []
-for (g_file, metadata_file) in tqdm(list_graph_metadata_files[0:100]):
+for (g_file, metadata_file) in tqdm(list_graph_metadata_files[0:40000]):
     if ".bin" in g_file:
         with open(os.path.join(training_graphs_path, g_file), "rb") as f:
             graph = pickle.load(f)
@@ -1287,9 +1287,9 @@ model_path = '/workspace/ml-workspace/thesis_git/HSGN/models'
 best_eval_f1 = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="40K ent rel & Hierar. Tok. Aggr.  span_lossx2", params=PARAMS, upload_source_files=['HGAT_gru_fuse_node2tok.py']):
+with neptune.create_experiment(name="Bottom-up 40K ent rel & Hierar. Tok. Aggr.  span_lossx2", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
     neptune.append_tag(["ent relation", "no SRL rel", "Query node", "multihop edges", "residual", "heterogenous", "wo_yn", "test"])
-    neptune.set_property('server', 'IRGPU5')
+    neptune.set_property('server', 'IRGPU2')
     neptune.set_property('training_set_path', training_path)
     neptune.set_property('dev_set_path', dev_path)
 
