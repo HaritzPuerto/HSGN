@@ -106,7 +106,7 @@ list_metadata_files = natural_sort([f for f in listdir(training_metadata_path) i
 list_graph_metadata_files = list(zip(list_graph_files, list_metadata_files))
 
 list_graphs = []
-for (g_file, metadata_file) in tqdm(list_graph_metadata_files[0:40000]):
+for (g_file, metadata_file) in tqdm(list_graph_metadata_files[0:100]):
     if ".bin" in g_file:
         with open(os.path.join(training_graphs_path, g_file), "rb") as f:
             graph = pickle.load(f)
@@ -469,6 +469,11 @@ class HGNModel(BertPreTrainedModel):
 #         self.gat = GAT(dict_params['gat_layers'], dict_params['in_feats'], dict_params['in_feats'], dict_params['out_feats'],
 #                            2, feat_drop = dict_params['feat_drop'],
 #                            attn_drop = dict_params['attn_drop'])
+        # Initial Node Embedding
+        self.bigru = nn.GRU(dict_params['in_feats'], dict_params['in_feats'], 
+                                    dropout = dict_params['feat_drop'], bidirectional=True)
+        self.gru_aggregation = nn.Linear(2*dict_params['in_feats'], dict_params['in_feats'])
+        # Graph Neural Network
         self.rgcn = HeteroRGCN(dict_params['etypes'], 768, 768, 768, dict_params['feat_drop'], dict_params['attn_drop'], dict_params['residual'])
         ## node classification
         ### ent node
@@ -504,12 +509,6 @@ class HGNModel(BertPreTrainedModel):
 #                                                            nn.ReLU(),
 #                                                  nn.Linear(int(dict_params['hidden_size_classifier']/2),
 #                                                            3))
-        
-        self.fuse_tok_srl_ent = nn.Sequential(nn.Linear(3*dict_params['out_feats'],
-                                                        dict_params['out_feats']),
-                                              nn.ReLU(),
-                                              nn.Linear(dict_params['out_feats'],
-                                                        dict_params['out_feats']))
         # init weights
         self.init_weights()
         # params
@@ -724,8 +723,6 @@ class HGNModel(BertPreTrainedModel):
                       for ntype in graph.ntypes if graph.number_of_nodes(ntype) > 0}
         for ntype in graph.ntypes:
             list_emb = []
-            if graph.number_of_nodes(ntype) == 0:
-                list_emb.append(torch.zeros((1,768), device=device))
             for (st, end) in graph.nodes[ntype].data['st_end_idx']:
                 list_emb.append(self.aggregate_emb(bert_context_emb[0][st:end]))
             graph_emb[ntype] = torch.stack(list_emb)
@@ -733,6 +730,17 @@ class HGNModel(BertPreTrainedModel):
     
     def aggregate_emb(self, token_emb):
         # average for now
+#         input_gru = token_emb.view(-1, 1, 768)
+#         encoder_output, encoder_hidden = self.bigru(input_gru)
+#         # get first and last output         
+#         left2right = encoder_output[-1, :, :768].view(-1, 768)
+#         right2left = encoder_output[0, :, 768:].view(-1, 768)
+#         # concat
+#         concat_both_dir = torch.cat((left2right, right2left), dim=1)
+#         # create the emb
+#         emb = self.gru_aggregation(concat_both_dir)
+#         print(emb.shape)
+#         return emb 
         return torch.mean(token_emb, dim = 0)
     
     def sample_sent_nodes(self, graph):
@@ -855,7 +863,6 @@ model.cuda()
 #     if not graph_for_eval(b_graph) or list_span_idx[step] == (-1, -1):
 #         continue
 #     model.zero_grad()
-#     b_graph = b_graph.to(torch.device(device))
 #     # forward
 #     input_ids=tensor_input_ids[step].unsqueeze(0).to(device)
 #     attention_mask=tensor_attention_masks[step].unsqueeze(0).to(device)
