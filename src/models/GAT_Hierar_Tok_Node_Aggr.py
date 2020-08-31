@@ -55,8 +55,8 @@ pretrained_weights = 'bert-base-cased'
 # ## Processing
 
 # %%
-training_path = os.path.join(data_path, "processed/training/heterog_20200831_bottomup_full_hierar_yn/")
-dev_path = os.path.join(data_path, "processed/dev/heterog_20200831_bottomup_full_hierar_yn/")
+training_path = os.path.join(data_path, "processed/training/heterog_20200831_bottomup_full_hierar_yn_q_srl_ent_2at/")
+dev_path = os.path.join(data_path, "processed/dev/heterog_20200831_bottomup_full_hierar_yn_q_srl_ent_2at/")
 
 with open(os.path.join(training_path, 'list_span_idx.p'), 'rb') as f:
     list_span_idx = pickle.load(f)
@@ -732,24 +732,16 @@ class HGNModel(BertPreTrainedModel):
         graph_emb = {ntype : nn.Parameter(torch.Tensor(graph.number_of_nodes(ntype), 768))
                       for ntype in graph.ntypes if graph.number_of_nodes(ntype) > 0}
         for ntype in graph.ntypes:
-            if ntype == 'AT':
+            list_emb = []
+            for (st, end) in graph.nodes[ntype].data['st_end_idx']:
                 node_token_emb = encoder_output[st:end]
                 left2right = node_token_emb[-1, :768].view(-1, 768)
                 right2left = node_token_emb[0, 768:].view(-1, 768)
                 # concat
                 concat_both_dir = torch.cat((left2right, right2left), dim=1)
-                graph_emb[ntype] = self.gru_aggregation(concat_both_dir)
-            else:
-                list_emb = []
-                for (st, end) in graph.nodes[ntype].data['st_end_idx']:
-                    node_token_emb = encoder_output[st:end]
-                    left2right = node_token_emb[-1, :768].view(-1, 768)
-                    right2left = node_token_emb[0, 768:].view(-1, 768)
-                    # concat
-                    concat_both_dir = torch.cat((left2right, right2left), dim=1)
-                    list_emb.append(concat_both_dir.squeeze(0))
-                list_emb = torch.stack(list_emb, dim=0)
-                graph_emb[ntype] = self.gru_aggregation(list_emb)
+                list_emb.append(concat_both_dir.squeeze(0))
+            list_emb = torch.stack(list_emb, dim=0)
+            graph_emb[ntype] = self.gru_aggregation(list_emb)
         return graph_emb
     
     def aggregate_emb(self, encoder_output):      
