@@ -98,6 +98,8 @@ def add_metadata2graph(graph, metadata):
 
 
 # %%
+
+# %%
 training_graphs_path = os.path.join(training_path, 'graphs')
 training_metadata_path = os.path.join(training_path, 'metadata')
 
@@ -112,8 +114,7 @@ for (g_file, metadata_file) in tqdm(list_graph_metadata_files[0:40000]):
             graph = pickle.load(f)
         with open(os.path.join(training_metadata_path, metadata_file), "rb") as f:
             metadata = pickle.load(f)
-            metadata['AT'] = metadata['at']
-            del metadata['at']
+            metadata['AT']['st_end_idx'] = metadata['AT']['st_end_idx'].reshape(1, -1)
         # add metadata to the graph
         graph = add_metadata2graph(graph, metadata)
         list_graphs.append(graph)
@@ -164,8 +165,7 @@ for (g_file, metadata_file) in tqdm(list_graph_metadata_files):
             graph = pickle.load(f)
         with open(os.path.join(dev_metadata_path, metadata_file), "rb") as f:
             metadata = pickle.load(f)
-            metadata['AT'] = metadata['at']
-            del metadata['at']
+            metadata['AT']['st_end_idx'] = metadata['AT']['st_end_idx'].reshape(1, -1)
         # add metadata to the graph
         graph = add_metadata2graph(graph, metadata)
         dev_list_graphs.append(graph)
@@ -531,10 +531,10 @@ class HGNModel(BertPreTrainedModel):
 
         # ans type prediction
         self.dropout_ans_type = nn.Dropout(config.hidden_dropout_prob)
-        self.ans_type_classifier = nn.Sequential(nn.Linear(dict_params['out_feats'],
-                                                           int(dict_params['hidden_size_classifier']/2)),
-                                                           nn.ReLU(),
-                                                 nn.Linear(int(dict_params['hidden_size_classifier']/2),
+        self.ans_type_classifier = nn.Sequential(nn.Linear(2*dict_params['out_feats'],
+                                                           int(dict_params['hidden_size_classifier'])),
+                                                 nn.ReLU(),
+                                                 nn.Linear(int(dict_params['hidden_size_classifier']),
                                                            3))
         # init weights
         self.init_weights()
@@ -701,8 +701,9 @@ class HGNModel(BertPreTrainedModel):
             probs_ent = F.softmax(logits_ent, dim=1).cpu()
             # shape [num_ent_nodes, 2]
 
-#         # ans type
-        logits_ans_type = self.ans_type_classifier(self.dropout_ans_type(graph_emb['AT'])).view(1, -1)
+        # ans type
+        input_ans_type_classif = self.dropout_ans_type(torch.cat((graph_emb['AT'], graph_emb['query']), dim=1))
+        logits_ans_type = self.ans_type_classifier(input_ans_type_classif).view(1, -1)
         prediction_ans_type = torch.argmax(logits_ans_type, dim=1)
         ans_type_label = graph.nodes['AT'].data['labels'].squeeze(0).to(device)
         loss_ans_type = loss_fn_ans_type(logits_ans_type, ans_type_label)
@@ -1305,9 +1306,9 @@ model_path = '/workspace/ml-workspace/thesis_git/HSGN/models'
 best_eval_f1 = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="w/yes no BiGRU initial emb Bottom-up 40K ent rel & Hierar. Tok. Aggr.  span_lossx2", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
+with neptune.create_experiment(name="w/yes no 371 + Query in AT classif. BiGRU initial emb Bottom-up 40K ent rel & Hierar. Tok. Aggr.  span_lossx2", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
     neptune.append_tag(["bigru initial emb", "bottom-up", "ent relation", "no SRL rel", "Query node", "multihop edges", "residual", "w_yn"])
-    neptune.set_property('server', 'IRGPU2')
+    neptune.set_property('server', 'IRGPU5')
     neptune.set_property('training_set_path', training_path)
     neptune.set_property('dev_set_path', dev_path)
 
