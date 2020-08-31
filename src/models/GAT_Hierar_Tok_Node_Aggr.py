@@ -114,7 +114,6 @@ for (g_file, metadata_file) in tqdm(list_graph_metadata_files[0:40000]):
             graph = pickle.load(f)
         with open(os.path.join(training_metadata_path, metadata_file), "rb") as f:
             metadata = pickle.load(f)
-            metadata['AT']['st_end_idx'] = metadata['AT']['st_end_idx'].reshape(1, -1)
         # add metadata to the graph
         graph = add_metadata2graph(graph, metadata)
         list_graphs.append(graph)
@@ -165,7 +164,6 @@ for (g_file, metadata_file) in tqdm(list_graph_metadata_files):
             graph = pickle.load(f)
         with open(os.path.join(dev_metadata_path, metadata_file), "rb") as f:
             metadata = pickle.load(f)
-            metadata['AT']['st_end_idx'] = metadata['AT']['st_end_idx'].reshape(1, -1)
         # add metadata to the graph
         graph = add_metadata2graph(graph, metadata)
         dev_list_graphs.append(graph)
@@ -1298,7 +1296,7 @@ model_path = '/workspace/ml-workspace/thesis_git/HSGN/models'
 best_eval_f1 = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="w/yes no 371 + Query in AT classif. BiGRU initial emb Bottom-up 40K ent rel & Hierar. Tok. Aggr.  span_lossx2", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
+with neptune.create_experiment(name="w/yes no 371 + srl-ent-query2AT + AT-query classif. BiGRU initial emb Bottom-up 40K ent rel & Hierar. Tok. Aggr.  span_lossx2", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
     neptune.append_tag(["bigru initial emb", "bottom-up", "ent relation", "no SRL rel", "Query node", "multihop edges", "residual", "w_yn"])
     neptune.set_property('server', 'IRGPU5')
     neptune.set_property('training_set_path', training_path)
@@ -1378,8 +1376,8 @@ with neptune.create_experiment(name="w/yes no 371 + Query in AT classif. BiGRU i
                 neptune.log_metric("ent_loss", ent_loss.detach().item())
             if span_loss is not None:
                 neptune.log_metric("span_loss", span_loss.detach().item())
-#             if ans_type_loss is not None:
-#                 neptune.log_metric("ans_type_loss", ans_type_loss.detach().item())
+            if ans_type_loss is not None:
+                neptune.log_metric("ans_type_loss", ans_type_loss.detach().item())
 
             # backpropagation
             total_loss.backward()
