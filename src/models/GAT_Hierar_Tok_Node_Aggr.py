@@ -106,7 +106,7 @@ list_metadata_files = natural_sort([f for f in listdir(training_metadata_path) i
 list_graph_metadata_files = list(zip(list_graph_files, list_metadata_files))
 
 list_graphs = []
-for (g_file, metadata_file) in tqdm(list_graph_metadata_files[0:40000]):
+for (g_file, metadata_file) in tqdm(list_graph_metadata_files[0:10000]):
     if ".bin" in g_file:
         with open(os.path.join(training_graphs_path, g_file), "rb") as f:
             graph = pickle.load(f)
@@ -727,8 +727,14 @@ class HGNModel(BertPreTrainedModel):
         for ntype in graph.ntypes:
             list_emb = []
             for (st, end) in graph.nodes[ntype].data['st_end_idx']:
-                list_emb.append(self.aggregate_emb(encoder_output[st:end]))
-            graph_emb[ntype] = torch.stack(list_emb)
+                node_token_emb = encoder_output[st:end]
+                left2right = node_token_emb[-1, :768].view(-1, 768)
+                right2left = node_token_emb[0, 768:].view(-1, 768)
+                # concat
+                concat_both_dir = torch.cat((left2right, right2left), dim=1)
+                list_emb.append(concat_both_dir.squeeze(0))
+            list_emb = torch.stack(list_emb, dim=0)
+            graph_emb[ntype] = self.gru_aggregation(list_emb)
         return graph_emb
     
     def aggregate_emb(self, encoder_output):      
