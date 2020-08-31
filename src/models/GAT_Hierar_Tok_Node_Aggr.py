@@ -1364,7 +1364,7 @@ with neptune.create_experiment(name="w/yes no 371 + srl-ent-query2AT + AT-query 
             sent_loss = output['sent']['loss']
             ent_loss = output['ent']['loss']
             srl_loss = output['srl']['loss']
-            #ans_type_loss = output['ans_type']['loss']
+            ans_type_loss = output['ans_type']['loss']
             span_loss = output['span']['loss']
             # neptune
             neptune.log_metric("total_loss", total_loss.detach().item())
