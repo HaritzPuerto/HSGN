@@ -672,8 +672,8 @@ class HGNModel(BertPreTrainedModel):
                                                         initial_graph_emb['srl']), dim=1))
             # shape [num_ent_nodes, 2] 
             assert not torch.isnan(logits_srl).any()
-            logits_ent = []
-            ent_labels = []
+            logits_ent = None
+            ent_labels = None
             if 'ent' in graph.ntypes:
                 logits_ent = self.ent_classifier(torch.cat((graph_emb['ent'],
                                                             initial_graph_emb['ent']), dim=1))
@@ -1179,7 +1179,8 @@ class Validation():
         num_valid_examples = 0
         for step, b_graph in enumerate(tqdm(self.validation_dataloader)):
             num_valid_examples += 1
-            
+            if step < 700:
+                continue
             with torch.no_grad():
                 output = self.model(b_graph,
                                input_ids=self.tensor_input_ids[step].unsqueeze(0).to(device),
@@ -1199,12 +1200,8 @@ class Validation():
             srl_labels = output['srl']['lbl']
             self.update_srl_metrics(metrics, prediction_srl, srl_labels, output['srl']['probs'][:,1])
             # ent
-            no_ent = False
-            if len(output['ent']['probs']) != 0:
+            if output['ent']['probs'] is not None:
                 prediction_ent = torch.argmax(output['ent']['probs'], dim=1)
-            else:
-                no_ent = True
-            if not no_ent:
                 ent_labels = output['ent']['lbl']
                 self.update_ent_metrics(metrics, prediction_ent, ent_labels, output['ent']['probs'][:,1])
             #span prediction
