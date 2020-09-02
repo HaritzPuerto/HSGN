@@ -48,7 +48,7 @@ with open(os.path.join(hotpot_qa_path, "hotpot_dev_distractor_v1.json"), "r") as
 
 # %%
 device = 'cuda'
-pretrained_weights = 'bert-large-cased'
+pretrained_weights = 'bert-base-cased'
 #pretrained_weights = 'bert-large-cased-whole-word-masking'
 
 # ## HotpotQA Processing
