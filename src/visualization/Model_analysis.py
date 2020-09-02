@@ -41,37 +41,20 @@ torch.cuda.manual_seed_all(random_seed)
 data_path = "/workspace/ml-workspace/thesis_git/HSGN/data/"
 hotpot_qa_path = os.path.join(data_path, "external")
 
-with open(os.path.join(hotpot_qa_path, "hotpot_train_v1.1.json"), "r") as f:
-    hotpot_train = json.load(f)
 with open(os.path.join(hotpot_qa_path, "hotpot_dev_distractor_v1.json"), "r") as f:
     hotpot_dev = json.load(f)
 
 # %%
 device = 'cuda'
-pretrained_weights = 'bert-large-cased'
-#pretrained_weights = 'bert-large-cased-whole-word-masking'
+pretrained_weights = 'bert-base-cased'
 
 # ## HotpotQA Processing
 
 # ## Processing
 
 # %%
-training_path = os.path.join(data_path, "processed/training/heterog_20200831_bottomup_full_hierar_yn_q_srl_ent_2at/")
 dev_path = os.path.join(data_path, "processed/dev/heterog_20200831_bottomup_full_hierar_yn_q_srl_ent_2at/")
 
-with open(os.path.join(training_path, 'list_span_idx.p'), 'rb') as f:
-    list_span_idx = pickle.load(f)
-
-tensor_input_ids = torch.load(os.path.join(training_path, 'tensor_input_ids.p'))
-tensor_token_type_ids = torch.load(os.path.join(training_path, 'tensor_token_type_ids.p'))
-tensor_attention_masks = torch.load(os.path.join(training_path, 'tensor_attention_masks.p'))
-
-tensor_input_ids = tensor_input_ids.to(device)
-tensor_attention_masks = tensor_attention_masks.to(device)
-tensor_token_type_ids = tensor_token_type_ids.to(device)
-
-
-# %%
 with open(os.path.join(dev_path, 'list_span_idx.p'), 'rb') as f:
     dev_list_span_idx = pickle.load(f)
 dev_tensor_input_ids = torch.load(os.path.join(dev_path, 'tensor_input_ids.p'))
@@ -97,58 +80,6 @@ def add_metadata2graph(graph, metadata):
             graph.nodes[node].data[k] = torch.tensor(v)
     return graph
 
-
-# %%
-
-# %%
-training_graphs_path = os.path.join(training_path, 'graphs')
-training_metadata_path = os.path.join(training_path, 'metadata')
-
-list_graph_files = natural_sort([f for f in listdir(training_graphs_path) if isfile(join(training_graphs_path, f))])
-list_metadata_files = natural_sort([f for f in listdir(training_metadata_path) if isfile(join(training_metadata_path, f))])
-list_graph_metadata_files = list(zip(list_graph_files, list_metadata_files))
-
-list_graphs = []
-for (g_file, metadata_file) in tqdm(list_graph_metadata_files[0:40000]):
-    if ".bin" in g_file:
-        with open(os.path.join(training_graphs_path, g_file), "rb") as f:
-            graph = pickle.load(f)
-        with open(os.path.join(training_metadata_path, metadata_file), "rb") as f:
-            metadata = pickle.load(f)
-        # add metadata to the graph
-        graph = add_metadata2graph(graph, metadata)
-        list_graphs.append(graph)
-
-# %%
-# training_graphs_path = os.path.join(training_path, 'graphs')
-# training_metadata_path = os.path.join(training_path, 'metadata')
-
-# list_graph_files = natural_sort([f for f in listdir(training_graphs_path) if isfile(join(training_graphs_path, f))])
-# list_metadata_files = natural_sort([f for f in listdir(training_metadata_path) if isfile(join(training_metadata_path, f))])
-# list_graph_metadata_files = list(zip(list_graph_files, list_metadata_files))
-
-# list_graphs = []
-# for (g_file, metadata_file) in tqdm(list_graph_metadata_files[0:200]):
-#     if ".bin" in g_file:
-#         f = os.path.join(training_graphs_path, g_file)
-#         graph = dgl.load_graphs(f)[0][0]
-#         list_graphs.append(graph)
-
-
-# %%
-# dev_graphs_path = os.path.join(dev_path, 'graphs/')
-# dev_metadata_path = os.path.join(dev_path, 'metadata/')
-
-# list_graph_files = natural_sort([f for f in listdir(dev_graphs_path) if isfile(join(dev_graphs_path, f))])
-# list_metadata_files = natural_sort([f for f in listdir(dev_metadata_path) if isfile(join(dev_metadata_path, f))])
-# list_graph_metadata_files = list(zip(list_graph_files, list_metadata_files))
-
-# dev_list_graphs = []
-# for (g_file, metadata_file) in tqdm(list_graph_metadata_files):
-#     if ".bin" in g_file:
-#         f = os.path.join(dev_graphs_path, g_file)
-#         graph = dgl.load_graphs(f)[0][0]
-#         dev_list_graphs.append(graph)
 
 # %%
 dev_graphs_path = os.path.join(dev_path, 'graphs/')
@@ -179,7 +110,7 @@ def graph_for_eval(graph):
 
 # %%
 weights = [0., 0., 0.]
-for ins in hotpot_train:
+for ins in hotpot_dev:
     if ins['answer'] == 'yes':
         weights[1] += 1
     elif ins['answer'] == 'no':
@@ -272,7 +203,6 @@ class GAT(nn.Module):
 class HeteroRGCNLayer(nn.Module):
     def __init__(self, in_size, out_size, etypes, feat_drop = 0., attn_drop = 0., residual = False):
         super(HeteroRGCNLayer, self).__init__()
-        self.in_size = in_size
         # W_r for each edge type
         self.tok_trans = nn.Linear(in_size, out_size)
         self.tok_att = nn.Linear(2 * in_size, out_size)
@@ -334,8 +264,8 @@ class HeteroRGCNLayer(nn.Module):
         '''
         e_ij = LeakyReLU(W * (Wh_j || Wh_i))
         '''
-        src = edges.src['h'].view(1,-1,self.in_size)
-        tok = edges.dst['h'].view(1,-1,self.in_size) # the token node
+        src = edges.src['h'].view(1,-1,768)
+        tok = edges.dst['h'].view(1,-1,768) # the token node
         m = self.gru_node2tok(src, tok)[0].squeeze(0)
         return {'m': m}
     
@@ -403,12 +333,12 @@ class HeteroRGCNLayer(nn.Module):
         if 'ent' in G.ntypes:
             G['ent2tok'].update_all(self.message_func_2tok, fn.sum('m', 'h_ent'))
         #batched all tokens since we want to put into the GRU (srl, ent, hidden=tok) so batch size = 512
-        h_tok = G.nodes['tok'].data['h'].view(1,-1,self.in_size)
-        h_srl = G.nodes['tok'].data.pop('h_srl').view(1,-1,self.in_size)
+        h_tok = G.nodes['tok'].data['h'].view(1,-1,768)
+        h_srl = G.nodes['tok'].data.pop('h_srl').view(1,-1,768)
         gru_input = h_srl
         if 'h_ent' in G.nodes['tok'].data:
             # there can be an instance without entities (not common anyway)
-            h_ent = G.nodes['tok'].data.pop('h_ent').view(1,-1,self.in_size)
+            h_ent = G.nodes['tok'].data.pop('h_ent').view(1,-1,768)
             gru_input = torch.cat((h_ent, h_tok), dim=0)            
         G.nodes['tok'].data['h'] = self.gru_node2tok(gru_input, h_srl)[0][-1]
         
@@ -455,7 +385,6 @@ class HeteroRGCNLayer(nn.Module):
 class HeteroRGCN(nn.Module):
     def __init__(self, etypes, in_size, hidden_size, out_size, feat_drop, attn_drop, residual):
         super(HeteroRGCN, self).__init__()
-        self.in_size = in_size
         self.layer1 = HeteroRGCNLayer(in_size, hidden_size, etypes, feat_drop, attn_drop, residual)
         self.layer2 = HeteroRGCNLayer(hidden_size, out_size, etypes, feat_drop, attn_drop, residual)
         self.gru_layer_lvl = nn.GRU(in_size, out_size)
@@ -463,18 +392,18 @@ class HeteroRGCN(nn.Module):
         self.init_params()
         
     def forward(self, G, emb, bert_token_emb):
-        h_tok0 = emb['tok'].view(1,-1,self.in_size)
+        h_tok0 = emb['tok'].view(1,-1,768)
         
         h_dict = self.layer1(G, emb, bert_token_emb)
-        h_tok1 = h_dict['tok'].view(1,-1,self.in_size)
+        h_tok1 = h_dict['tok'].view(1,-1,768)
         h_dict = {k : F.leaky_relu(h) for k, h in h_dict.items()}
         
         h_dict = self.layer2(G, h_dict, bert_token_emb)
-        h_tok2 = h_dict['tok'].view(1,-1,self.in_size)
+        h_tok2 = h_dict['tok'].view(1,-1,768)
         
         #tok1, tok2 form a sequence and the initial hidden emb is tok0
         gru_input = torch.cat((h_tok1, h_tok2), dim=0)
-        tok_emb = self.gru_layer_lvl(gru_input, h_tok0)[0][-1].view(-1, self.in_size)
+        tok_emb = self.gru_layer_lvl(gru_input, h_tok0)[0][-1].view(-1, 768)
         h_dict['tok'] = tok_emb
         return h_dict
     
@@ -487,10 +416,7 @@ class HeteroRGCN(nn.Module):
 
 
 # %%
-bert_dim = 768 # default
-if 'large' in pretrained_weights:
-    bert_dim = 1024
-dict_params = {'in_feats': bert_dim, 'out_feats': bert_dim, 'feat_drop': 0.1, 'attn_drop': 0.1, 'residual': True, 'hidden_size_classifier': 768,
+dict_params = {'in_feats': 768, 'out_feats': 768, 'feat_drop': 0.1, 'attn_drop': 0.1, 'residual': True, 'hidden_size_classifier': 768,
                'weight_sent_loss': 1, 'weight_srl_loss': 1, 'weight_ent_loss': 1,
                'weight_span_loss': 2, 'weight_ans_type_loss': 1, 
                'gat_layers': 2, 'etypes': graph.etypes}
@@ -509,9 +435,7 @@ class HGNModel(BertPreTrainedModel):
                                     dropout = dict_params['feat_drop'], bidirectional=True)
         self.gru_aggregation = nn.Linear(2*dict_params['in_feats'], dict_params['in_feats'])
         # Graph Neural Network
-        self.rgcn = HeteroRGCN(dict_params['etypes'], dict_params['in_feats'], dict_params['in_feats'],
-                               dict_params['in_feats'], dict_params['feat_drop'], dict_params['attn_drop'], 
-                               dict_params['residual'])
+        self.rgcn = HeteroRGCN(dict_params['etypes'], 768, 768, 768, dict_params['feat_drop'], dict_params['attn_drop'], dict_params['residual'])
         ## node classification
         ### ent node
         self.dropout_ent = nn.Dropout(config.hidden_dropout_prob)
@@ -646,31 +570,28 @@ class HGNModel(BertPreTrainedModel):
             
             # contains the indexes of the srl nodes
             if len(sample_srl_nodes) == 0:
-                logits_srl = None
-                srl_labels = None
+                logits_srl = torch.tensor([[]], device=device)
             else:
                 logits_srl = self.srl_classifier(torch.cat((graph_emb['srl'][sample_srl_nodes],
                                                             initial_graph_emb['srl'][sample_srl_nodes]), dim=1))
                 # shape [num_ent_nodes, 2] 
                 assert not torch.isnan(logits_srl).any()
-                srl_labels = graph.nodes['srl'].data['labels'][sample_srl_nodes].to(device)
-                # shape [num_sampled_srl_nodes, 1]
             
             # contains the indexes of the ent nodes
             if len(sample_ent_nodes) == 0:
-                logits_ent = None
-                ent_labels = None
+                logits_ent = torch.tensor([[]], device=device)
             else:
                 logits_ent = self.ent_classifier(torch.cat((graph_emb['ent'][sample_ent_nodes],
                                                             initial_graph_emb['ent'][sample_ent_nodes]), dim=1))
                 # shape [num_ent_nodes, 2] 
                 assert not torch.isnan(logits_ent).any()
-                ent_labels = graph.nodes['ent'].data['labels'][sample_ent_nodes].to(device)
-                # shape [num_sampled_ent_nodes, 1]    
+                       
             sent_labels = graph.nodes['sent'].data['labels'][sample_sent_nodes].to(device)
             # shape [num_sampled_sent_nodes, 1]
-            
-            
+            srl_labels = graph.nodes['srl'].data['labels'][sample_srl_nodes].to(device)
+            # shape [num_sampled_srl_nodes, 1]
+            ent_labels = graph.nodes['ent'].data['labels'][sample_ent_nodes].to(device)
+            # shape [num_sampled_ent_nodes, 1]
         else:
             # add skip-connection
             logits_sent = self.sent_classifier(torch.cat((graph_emb['sent'],
@@ -680,8 +601,8 @@ class HGNModel(BertPreTrainedModel):
                                                         initial_graph_emb['srl']), dim=1))
             # shape [num_ent_nodes, 2] 
             assert not torch.isnan(logits_srl).any()
-            logits_ent = None
-            ent_labels = None
+            logits_ent = []
+            ent_labels = []
             if 'ent' in graph.ntypes:
                 logits_ent = self.ent_classifier(torch.cat((graph_emb['ent'],
                                                             initial_graph_emb['ent']), dim=1))
@@ -705,21 +626,14 @@ class HGNModel(BertPreTrainedModel):
         # srl loss
         loss_srl = None # not all ans are inside an srl arg
         probs_ent = torch.tensor([], device=device)
-        if logits_srl is None:
-            loss_srl = None
-            probs_srl = None
-        else:
+        if len(logits_srl) != 0:
             loss_srl = loss_fn(logits_srl, srl_labels.view(-1).long())
             probs_srl = F.softmax(logits_srl, dim=1).cpu()
             # shape [num_srl_nodes, 2]
-
         # ent loss
         loss_ent = None # not all ans are an entity
         probs_ent = torch.tensor([], device=device)
-        if logits_ent is None:
-            loss_ent = None
-            probs_ent = None
-        else:        
+        if len(logits_ent) != 0:
             loss_ent = loss_fn(logits_ent, ent_labels.view(-1).long())
             probs_ent = F.softmax(logits_ent, dim=1).cpu()
             # shape [num_ent_nodes, 2]
@@ -731,11 +645,9 @@ class HGNModel(BertPreTrainedModel):
         ans_type_label = graph.nodes['AT'].data['labels'].squeeze(0).to(device)
         loss_ans_type = loss_fn_ans_type(logits_ans_type, ans_type_label)
 
-        # labels to cpu
         sent_labels = sent_labels.cpu().view(-1)
-        if srl_labels is not None:
-            srl_labels = srl_labels.cpu().view(-1)
-        if ent_labels is not None:
+        srl_labels = srl_labels.cpu().view(-1)
+        if ent_labels != []:
             ent_labels = ent_labels.cpu().view(-1)
         ans_type_label = ans_type_label.cpu().view(-1)
 
@@ -752,10 +664,10 @@ class HGNModel(BertPreTrainedModel):
             - graph
             - bert_context_emb shape [1, #max len, 768]
         '''
-        input_gru = bert_context_emb[0].view(-1, 1, dict_params['in_feats'])
+        input_gru = bert_context_emb[0].view(-1, 1, 768)
         encoder_output, encoder_hidden = self.bigru(input_gru)
-        encoder_output = encoder_output.view(-1, dict_params['in_feats']*2)
-        graph_emb = {ntype : nn.Parameter(torch.Tensor(graph.number_of_nodes(ntype), dict_params['in_feats']))
+        encoder_output = encoder_output.view(-1, 768*2)
+        graph_emb = {ntype : nn.Parameter(torch.Tensor(graph.number_of_nodes(ntype), 768))
                       for ntype in graph.ntypes if graph.number_of_nodes(ntype) > 0}
         for ntype in graph.ntypes:
             if graph.number_of_nodes(ntype) == 0:
@@ -763,8 +675,8 @@ class HGNModel(BertPreTrainedModel):
             list_emb = []
             for (st, end) in graph.nodes[ntype].data['st_end_idx']:
                 node_token_emb = encoder_output[st:end]
-                left2right = node_token_emb[-1, :dict_params['in_feats']].view(-1, dict_params['in_feats'])
-                right2left = node_token_emb[0, dict_params['in_feats']:].view(-1, dict_params['in_feats'])
+                left2right = node_token_emb[-1, :768].view(-1, 768)
+                right2left = node_token_emb[0, 768:].view(-1, 768)
                 # concat
                 concat_both_dir = torch.cat((left2right, right2left), dim=1)
                 list_emb.append(concat_both_dir.squeeze(0))
@@ -773,8 +685,8 @@ class HGNModel(BertPreTrainedModel):
         return graph_emb
     
     def aggregate_emb(self, encoder_output):      
-        left2right = encoder_output[-1, :dict_params['in_feats']].view(-1, dict_params['in_feats'])
-        right2left = encoder_output[0, dict_params['in_feats']:].view(-1, dict_params['in_feats'])
+        left2right = encoder_output[-1, :768].view(-1, 768)
+        right2left = encoder_output[0, 768:].view(-1, 768)
         # concat
         concat_both_dir = torch.cat((left2right, right2left), dim=1)
         # create the emb
@@ -873,136 +785,9 @@ class HGNModel(BertPreTrainedModel):
 
 
 # %%
-
-
-from transformers import AdamW, BertConfig
-
-model = HGNModel.from_pretrained(
-    pretrained_weights, # Use the 12-layer BERT model, with an cased vocab.
-    num_labels = 2, # The number of output labels--2 for binary classification.
-                    # You can increase this for multi-class tasks.   
-    output_attentions = False, # Whether the model returns attentions weights.
-    output_hidden_states = False, # Whether the model returns all hidden-states.
-)
-
-# Tell pytorch to run this model on the GPU.
+model_path = '/workspace/ml-workspace/thesis_git/HSGN/models'
+model = HGNModel.from_pretrained(model_path)
 model.cuda()
-
-
-# # Optimizer & Learning Rate Scheduler
-# 
-# For the purposes of fine-tuning, the authors recommend choosing from the following values (from Appendix A.3 of the BERT paper):
-# 
-# * Learning rate (Adam): 5e-5, 3e-5, 2e-5
-# * Number of epochs: 2, 3, 4
-# 
-# 
-# 
-
-# %%
-# for step, b_graph in enumerate(tqdm(list_graphs)):
-#     model.zero_grad()
-#     # forward
-#     input_ids=tensor_input_ids[step].unsqueeze(0).to(device)
-#     attention_mask=tensor_attention_masks[step].unsqueeze(0).to(device)
-#     token_type_ids=tensor_token_type_ids[step].unsqueeze(0).to(device) 
-#     start_positions=torch.tensor([list_span_idx[step][0]], device='cuda')
-#     end_positions=torch.tensor([list_span_idx[step][1]], device='cuda')
-#     output = model(b_graph,
-#                    input_ids=input_ids,
-#                    attention_mask=attention_mask,
-#                    token_type_ids=token_type_ids, 
-#                    start_positions=start_positions,
-#                    end_positions=end_positions)
-
-# %%
-train_dataloader = list_graphs
-
-# %%
-lr = 1e-5
-optimizer = AdamW(model.parameters(),
-                  lr = lr, # args.learning_rate - default is 5e-5, 
-                  eps = 1e-8 # args.adam_epsilon  - default is 1e-8.
-                )
-
-
-# %%
-
-
-from transformers import get_linear_schedule_with_warmup, get_cosine_with_hard_restarts_schedule_with_warmup
-
-# Number of training epochs. The BERT authors recommend between 2 and 4. 
-epochs = 1
-
-# Total number of training steps is [number of batches] x [number of epochs]. 
-# (Note that this is not the same as the number of training samples).
-total_steps = len(train_dataloader) * epochs
-
-#Create the learning rate scheduler.
-scheduler = get_linear_schedule_with_warmup(optimizer, 
-                                             num_warmup_steps = 0, # Default value in run_glue.py
-                                             num_training_steps = total_steps)
-
-# scheduler_medium = get_linear_schedule_with_warmup(optimizer, 
-#                                             num_warmup_steps = 0, # Default value in run_glue.py
-#                                             num_training_steps = len(train_dataloader_medium) * epochs)
-# scheduler = get_cosine_with_hard_restarts_schedule_with_warmup(optimizer, 
-#                                                                num_warmup_steps = 0, # Default value in run_glue.py
-#                                                                num_training_steps = total_steps)
-
-
-# # Neptune Config
-
-# %%
-
-
-neptune_token = "eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vdWkubmVwdHVuZS5haSIsImFwaV91cmwiOiJodHRwczovL3VpLm5lcHR1bmUuYWkiLCJhcGlfa2V5IjoiYTA2MTgwYjQtMGJkMS00MTcxLTk0MWEtZjIxZThmYjlhYTA5In0="
-
-
-# %%
-
-
-train_batch_size = 1
-
-
-# %%
-
-
-import neptune
-neptune.init(
-    "haritz/srl-pred",
-    api_token=neptune_token,
-)
-neptune.set_project('haritz/srl-pred')
-PARAMS = {"num_epoch": epochs, 
-          'lr': lr, 
-          'pretrained_weights': pretrained_weights,
-          'loss_fn': 'crossentropy_label_smoothing', 
-          #'validation_size': len(validation_dataloader)*val_batch_size , 
-          'random_seed': random_seed,
-          'total_steps': total_steps, 
-          'training_size': len(train_dataloader)*train_batch_size, 
-          'train_batch_size': train_batch_size,
-          #'val_batch_size': val_batch_size, 
-          'scheduler': 'get_linear_schedule_with_warmup'}
-PARAMS.update(dict_params)
-
-
-# # Training Loop
-
-# %%
-import time
-import datetime
-
-def format_time(elapsed):
-    '''
-    Takes a time in seconds and returns a string hh:mm:ss
-    '''
-    # Round to the nearest second.
-    elapsed_rounded = int(round((elapsed)))
-    
-    # Format as hh:mm:ss
-    return str(datetime.timedelta(seconds=elapsed_rounded))
 
 
 # %%
@@ -1021,8 +806,6 @@ def recall_at_k(prob_pos, k, labels):
 def accuracy(pred, label):
     return torch.mean( (pred == label).type(torch.FloatTensor) ).item()
 
-
-# # Evaluation Helpers
 
 # %%
 def confusion(prediction, truth):
@@ -1171,7 +954,31 @@ class Validation():
         self.tensor_token_type_ids = tensor_token_type_ids
         self.list_span_idx = list_span_idx
         
-    def do_validation(self):       
+    def create_prediction_file(self):
+        output_predictions_ans = {}
+        for step, b_graph in enumerate(tqdm(self.validation_dataloader)): 
+            with torch.no_grad():
+                output = self.model(b_graph,
+                               input_ids=self.tensor_input_ids[step].unsqueeze(0).to(device),
+                               attention_mask=self.tensor_attention_masks[step].unsqueeze(0).to(device),
+                               token_type_ids=self.tensor_token_type_ids[step].unsqueeze(0).to(device), 
+                               start_positions=torch.tensor([self.list_span_idx[step][0]], device='cuda'),
+                               end_positions=torch.tensor([self.list_span_idx[step][1]], device='cuda'), train=False)
+            predicted_ans = ""
+            if output['ans_type']['pred'] == 0:
+                predicted_ans = get_pred_ans_str(self.tensor_input_ids[step], output, tokenizer)
+            elif output['ans_type']['pred'] == 1:
+                predicted_ans = 'yes'
+            else:
+                predicted_ans = 'no'
+            _id = self.dataset[step]['_id']
+            output_predictions_ans[_id] = predicted_ans
+            
+            prediction_sent = torch.argmax(output['sent']['probs'], dim=1)
+        return output_predictions
+        
+    def do_validation(self):
+        
         metrics = {'validation_loss': 0, 
                    'ans_em': 0, 'ans_f1': 0, 'ans_prec': 0 , 'ans_recall': 0,
                    'sp_em': 0, 'sp_f1': 0, 'sp_prec': 0, 'sp_recall': 0,
@@ -1185,8 +992,7 @@ class Validation():
         num_valid_examples = 0
         for step, b_graph in enumerate(tqdm(self.validation_dataloader)):
             num_valid_examples += 1
-            if step < 700:
-                continue
+            
             with torch.no_grad():
                 output = self.model(b_graph,
                                input_ids=self.tensor_input_ids[step].unsqueeze(0).to(device),
@@ -1206,8 +1012,12 @@ class Validation():
             srl_labels = output['srl']['lbl']
             self.update_srl_metrics(metrics, prediction_srl, srl_labels, output['srl']['probs'][:,1])
             # ent
-            if output['ent']['probs'] is not None:
+            no_ent = False
+            if len(output['ent']['probs']) != 0:
                 prediction_ent = torch.argmax(output['ent']['probs'], dim=1)
+            else:
+                no_ent = True
+            if not no_ent:
                 ent_labels = output['ent']['lbl']
                 self.update_ent_metrics(metrics, prediction_ent, ent_labels, output['ent']['probs'][:,1])
             #span prediction
@@ -1285,33 +1095,62 @@ class Validation():
 
 
 # %%
-# validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
-#                         dev_tensor_input_ids, dev_tensor_attention_masks, 
-#                         dev_tensor_token_type_ids,
-#                         dev_list_span_idx)
-# metrics = validation.do_validation()
+validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
+                        dev_tensor_input_ids, dev_tensor_attention_masks, 
+                        dev_tensor_token_type_ids,
+                        dev_list_span_idx)
+predictions = validation.create_prediction_file()
 
 # %%
-# metrics
 
 # %%
-import os
-import zipfile
-
-def zipdir(path, name):
-    zipf = zipfile.ZipFile(name, 'w', zipfile.ZIP_DEFLATED)
-    # ziph is zipfile handle
-    for root, dirs, files in os.walk(path):
-        for file in files:
-            zipf.write(os.path.join(root, file))
-    zipf.close()      
-
+predictions_full = {'answer': dict(), 'sp': dict()}
+for i, ins in enumerate(hotpot_dev):
+    _id = ins['_id']
+    predictions_full['answer'][_id] = predictions[i]
 
 # %%
-def record_eval_metric(neptune, metrics):
-    for k, v in metrics.items():
-        neptune.log_metric(k, v)
+with open('./predictions.json', 'w+') as f:
+    json.dump(predictions_full, f)
 
+# %%
+num_yes = 0
+num_no = 0
+for ans in predictions.values():
+    if ans == 'yes':
+        num_yes += 1
+    if ans == 'no':
+        num_no += 1
+
+# %%
+num_yes
+
+# %%
+num_no
+
+# %%
+hotpot_dev[0]
+
+# %%
+'ent' in dev_list_graphs[703].ntypes
+
+# %%
+data_path = '/workspace/ml-workspace/thesis_git/HSGN/data/'
+hotpotqa_path = 'external/'
+intermediate_train_data_path = 'interim/training/'
+intermediate_dev_data_path = 'interim/dev/'
+
+with open(os.path.join(data_path, intermediate_dev_data_path, "list_hotpot_ner_no_coref_dev.p"), "rb") as f:
+    list_hotpot_dev_ner = pickle.load(f)
+
+# %%
+hotpot_dev[703]['supporting_facts']
+
+# %%
+hotpot_dev[703]['context'][7]
+
+# %%
+list_hotpot_dev_ner[703][7]
 
 # %%
 model_path = '/workspace/ml-workspace/thesis_git/HSGN/models'
@@ -1319,9 +1158,9 @@ model_path = '/workspace/ml-workspace/thesis_git/HSGN/models'
 best_eval_f1 = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="w/yes fix + srl-ent-query2AT + AT-query classif. BiGRU initial emb Bottom-up 40K ent rel & Hierar. Tok. Aggr.  span_lossx2", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
+with neptune.create_experiment(name="w/yes no 371 + srl-ent-query2AT + AT-query classif. BiGRU initial emb Bottom-up 40K ent rel & Hierar. Tok. Aggr.  span_lossx2", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
     neptune.append_tag(["bigru initial emb", "bottom-up", "ent relation", "no SRL rel", "Query node", "multihop edges", "residual", "w_yn"])
-    neptune.set_property('server', 'IRGPU2')
+    neptune.set_property('server', 'IRGPU5')
     neptune.set_property('training_set_path', training_path)
     neptune.set_property('dev_set_path', dev_path)
 
@@ -1364,6 +1203,9 @@ with neptune.create_experiment(name="w/yes fix + srl-ent-query2AT + AT-query cla
                     best_eval_f1 = curr_f1
                     model.save_pretrained(model_path) 
                     
+            
+            if not graph_for_eval(b_graph) or list_span_idx[step] == (-1, -1):
+                continue
             neptune.log_metric('step', step)
             model.zero_grad()  
             # forward
@@ -1458,3 +1300,114 @@ with neptune.create_experiment(name="w/yes fix + srl-ent-query2AT + AT-query cla
     zipdir(model_path, os.path.join(model_path, 'checkpoint.zip'))
     # upload the model to neptune
     neptune.send_artifact(os.path.join(model_path, 'checkpoint.zip'))
+
+# %%
+#dev_list_graphs[7044].nodes['srl']
+
+# # %%
+# model_path = '/workspace/ml-workspace/thesis_git/HSGN/models'
+# model = HGNModel.from_pretrained(model_path)
+# model.to(device)
+
+# # %%
+# step = 9003
+# with torch.no_grad():
+#     input_ids=tensor_input_ids[step].unsqueeze(0).to(device)
+#     attention_mask=tensor_attention_masks[step].unsqueeze(0).to(device)
+#     token_type_ids=tensor_token_type_ids[step].unsqueeze(0).to(device) 
+#     start_positions=torch.tensor([list_span_idx[step][0]], device='cuda')
+#     end_positions=torch.tensor([list_span_idx[step][1]], device='cuda')
+#     output = model(list_graphs[step],
+#                    input_ids=input_ids,
+#                    attention_mask=attention_mask,
+#                    token_type_ids=token_type_ids, 
+#                    start_positions=start_positions,
+#                    end_positions=end_positions)
+
+
+# # %%
+# step = 9003
+
+# # %%
+# list_graphs[step].all_edges(form='uv', order=None, etype='srl2srl')
+
+# # %%
+# tensor_input_ids[list_graphs[step].edges['srl2srl'].data['span_idx']].shape
+
+# # %%
+# a = model.bert(tensor_input_ids[step].unsqueeze(0).to('cuda'))[0]
+
+# # %%
+# a.shape
+
+# # %%
+# list_graphs[step].edges['srl2srl'].data['span_idx'].shape
+
+# # %%
+# b = [a[0][x:y] for (x,y) in list_graphs[step].edges['srl2srl'].data['span_idx']]
+
+# # %%
+# torch.cat(b, dim=0).shape
+
+# # %%
+# list_graphs[step].edges['srl2srl'].data['span_idx'].shape
+
+# # %%
+# b = []
+# for i, (x,y) in enumerate(list_graphs[step].edges['srl2srl'].data['span_idx']):
+#     b.append(torch.mean(a[0][x:y], dim=0))
+
+# # %%
+# a[0][x:y]
+
+# # %%
+# x, y = list_graphs[step].edges['srl2srl'].data['span_idx'][66]
+
+# # %%
+# a[0][x:y].squeeze(0).shape
+
+# # %%
+# for i, x in enumerate(b):
+#     print(i, x.shape)
+
+# # %%
+# torch.stack(b, dim=0).shape
+
+# # %%
+# rel_emb = torch.cat([a[0][x:y] for (x,y) in list_graphs[step].edges['srl2srl'].data['span_idx']], dim = 0)
+
+# # %%
+# rel_emb.shape
+
+# # %%
+# for (x, y) in list_graphs[step].edges['srl2srl'].data['span_idx']:
+#     pass
+#     #print(tokenizer.decode(tensor_input_ids[step][x:y]))
+
+# # %%
+# print(tokenizer.decode(tensor_input_ids[step][[x,y]]))
+
+# # %%
+# list_graphs[step].number_of_nodes('srl')
+
+# # %%
+# list_graphs[step].nodes['srl'].data['st_end_idx'].shape
+
+# # %%
+# step = 7044
+# with torch.no_grad():
+#     input_ids=dev_tensor_input_ids[step].unsqueeze(0).to(device)
+#     attention_mask=dev_tensor_attention_masks[step].unsqueeze(0).to(device)
+#     token_type_ids=dev_tensor_token_type_ids[step].unsqueeze(0).to(device) 
+#     start_positions=torch.tensor([dev_list_span_idx[step][0]], device='cuda')
+#     end_positions=torch.tensor([dev_list_span_idx[step][1]], device='cuda')
+#     output = model(dev_list_graphs[step],
+#                    input_ids=input_ids,
+#                    attention_mask=attention_mask,
+#                    token_type_ids=token_type_ids, 
+#                    start_positions=start_positions,
+#                    end_positions=end_positions)
+
+# # %%
+
+# # %%
