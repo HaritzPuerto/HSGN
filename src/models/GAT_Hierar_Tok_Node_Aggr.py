@@ -48,7 +48,8 @@ with open(os.path.join(hotpot_qa_path, "hotpot_dev_distractor_v1.json"), "r") as
 
 # %%
 device = 'cuda'
-pretrained_weights = 'bert-base-cased'
+pretrained_weights = 'bert-large-cased'
+#pretrained_weights = 'bert-large-cased-whole-word-masking'
 
 # ## HotpotQA Processing
 
@@ -271,6 +272,7 @@ class GAT(nn.Module):
 class HeteroRGCNLayer(nn.Module):
     def __init__(self, in_size, out_size, etypes, feat_drop = 0., attn_drop = 0., residual = False):
         super(HeteroRGCNLayer, self).__init__()
+        self.in_size = in_size
         # W_r for each edge type
         self.tok_trans = nn.Linear(in_size, out_size)
         self.tok_att = nn.Linear(2 * in_size, out_size)
@@ -332,8 +334,8 @@ class HeteroRGCNLayer(nn.Module):
         '''
         e_ij = LeakyReLU(W * (Wh_j || Wh_i))
         '''
-        src = edges.src['h'].view(1,-1,768)
-        tok = edges.dst['h'].view(1,-1,768) # the token node
+        src = edges.src['h'].view(1,-1,self.in_size)
+        tok = edges.dst['h'].view(1,-1,self.in_size) # the token node
         m = self.gru_node2tok(src, tok)[0].squeeze(0)
         return {'m': m}
     
@@ -401,12 +403,12 @@ class HeteroRGCNLayer(nn.Module):
         if 'ent' in G.ntypes:
             G['ent2tok'].update_all(self.message_func_2tok, fn.sum('m', 'h_ent'))
         #batched all tokens since we want to put into the GRU (srl, ent, hidden=tok) so batch size = 512
-        h_tok = G.nodes['tok'].data['h'].view(1,-1,768)
-        h_srl = G.nodes['tok'].data.pop('h_srl').view(1,-1,768)
+        h_tok = G.nodes['tok'].data['h'].view(1,-1,self.in_size)
+        h_srl = G.nodes['tok'].data.pop('h_srl').view(1,-1,self.in_size)
         gru_input = h_srl
         if 'h_ent' in G.nodes['tok'].data:
             # there can be an instance without entities (not common anyway)
-            h_ent = G.nodes['tok'].data.pop('h_ent').view(1,-1,768)
+            h_ent = G.nodes['tok'].data.pop('h_ent').view(1,-1,self.in_size)
             gru_input = torch.cat((h_ent, h_tok), dim=0)            
         G.nodes['tok'].data['h'] = self.gru_node2tok(gru_input, h_srl)[0][-1]
         
@@ -453,6 +455,7 @@ class HeteroRGCNLayer(nn.Module):
 class HeteroRGCN(nn.Module):
     def __init__(self, etypes, in_size, hidden_size, out_size, feat_drop, attn_drop, residual):
         super(HeteroRGCN, self).__init__()
+        self.in_size = in_size
         self.layer1 = HeteroRGCNLayer(in_size, hidden_size, etypes, feat_drop, attn_drop, residual)
         self.layer2 = HeteroRGCNLayer(hidden_size, out_size, etypes, feat_drop, attn_drop, residual)
         self.gru_layer_lvl = nn.GRU(in_size, out_size)
@@ -460,18 +463,18 @@ class HeteroRGCN(nn.Module):
         self.init_params()
         
     def forward(self, G, emb, bert_token_emb):
-        h_tok0 = emb['tok'].view(1,-1,768)
+        h_tok0 = emb['tok'].view(1,-1,self.in_size)
         
         h_dict = self.layer1(G, emb, bert_token_emb)
-        h_tok1 = h_dict['tok'].view(1,-1,768)
+        h_tok1 = h_dict['tok'].view(1,-1,self.in_size)
         h_dict = {k : F.leaky_relu(h) for k, h in h_dict.items()}
         
         h_dict = self.layer2(G, h_dict, bert_token_emb)
-        h_tok2 = h_dict['tok'].view(1,-1,768)
+        h_tok2 = h_dict['tok'].view(1,-1,self.in_size)
         
         #tok1, tok2 form a sequence and the initial hidden emb is tok0
         gru_input = torch.cat((h_tok1, h_tok2), dim=0)
-        tok_emb = self.gru_layer_lvl(gru_input, h_tok0)[0][-1].view(-1, 768)
+        tok_emb = self.gru_layer_lvl(gru_input, h_tok0)[0][-1].view(-1, self.in_size)
         h_dict['tok'] = tok_emb
         return h_dict
     
@@ -484,7 +487,10 @@ class HeteroRGCN(nn.Module):
 
 
 # %%
-dict_params = {'in_feats': 768, 'out_feats': 768, 'feat_drop': 0.1, 'attn_drop': 0.1, 'residual': True, 'hidden_size_classifier': 768,
+bert_dim = 768 # default
+if 'large' in pretrained_weights:
+    bert_dim = 1024
+dict_params = {'in_feats': bert_dim, 'out_feats': bert_dim, 'feat_drop': 0.1, 'attn_drop': 0.1, 'residual': True, 'hidden_size_classifier': 768,
                'weight_sent_loss': 1, 'weight_srl_loss': 1, 'weight_ent_loss': 1,
                'weight_span_loss': 2, 'weight_ans_type_loss': 1, 
                'gat_layers': 2, 'etypes': graph.etypes}
@@ -503,7 +509,9 @@ class HGNModel(BertPreTrainedModel):
                                     dropout = dict_params['feat_drop'], bidirectional=True)
         self.gru_aggregation = nn.Linear(2*dict_params['in_feats'], dict_params['in_feats'])
         # Graph Neural Network
-        self.rgcn = HeteroRGCN(dict_params['etypes'], 768, 768, 768, dict_params['feat_drop'], dict_params['attn_drop'], dict_params['residual'])
+        self.rgcn = HeteroRGCN(dict_params['etypes'], dict_params['in_feats'], dict_params['in_feats'],
+                               dict_params['in_feats'], dict_params['feat_drop'], dict_params['attn_drop'], 
+                               dict_params['residual'])
         ## node classification
         ### ent node
         self.dropout_ent = nn.Dropout(config.hidden_dropout_prob)
@@ -744,10 +752,10 @@ class HGNModel(BertPreTrainedModel):
             - graph
             - bert_context_emb shape [1, #max len, 768]
         '''
-        input_gru = bert_context_emb[0].view(-1, 1, 768)
+        input_gru = bert_context_emb[0].view(-1, 1, dict_params['in_feats'])
         encoder_output, encoder_hidden = self.bigru(input_gru)
-        encoder_output = encoder_output.view(-1, 768*2)
-        graph_emb = {ntype : nn.Parameter(torch.Tensor(graph.number_of_nodes(ntype), 768))
+        encoder_output = encoder_output.view(-1, dict_params['in_feats']*2)
+        graph_emb = {ntype : nn.Parameter(torch.Tensor(graph.number_of_nodes(ntype), dict_params['in_feats']))
                       for ntype in graph.ntypes if graph.number_of_nodes(ntype) > 0}
         for ntype in graph.ntypes:
             if graph.number_of_nodes(ntype) == 0:
@@ -755,8 +763,8 @@ class HGNModel(BertPreTrainedModel):
             list_emb = []
             for (st, end) in graph.nodes[ntype].data['st_end_idx']:
                 node_token_emb = encoder_output[st:end]
-                left2right = node_token_emb[-1, :768].view(-1, 768)
-                right2left = node_token_emb[0, 768:].view(-1, 768)
+                left2right = node_token_emb[-1, :dict_params['in_feats']].view(-1, dict_params['in_feats'])
+                right2left = node_token_emb[0, dict_params['in_feats']:].view(-1, dict_params['in_feats'])
                 # concat
                 concat_both_dir = torch.cat((left2right, right2left), dim=1)
                 list_emb.append(concat_both_dir.squeeze(0))
@@ -765,8 +773,8 @@ class HGNModel(BertPreTrainedModel):
         return graph_emb
     
     def aggregate_emb(self, encoder_output):      
-        left2right = encoder_output[-1, :768].view(-1, 768)
-        right2left = encoder_output[0, 768:].view(-1, 768)
+        left2right = encoder_output[-1, :dict_params['in_feats']].view(-1, dict_params['in_feats'])
+        right2left = encoder_output[0, dict_params['in_feats']:].view(-1, dict_params['in_feats'])
         # concat
         concat_both_dir = torch.cat((left2right, right2left), dim=1)
         # create the emb
@@ -893,8 +901,6 @@ model.cuda()
 
 # %%
 # for step, b_graph in enumerate(tqdm(list_graphs)):
-#     if step < 3517:
-#         continue
 #     model.zero_grad()
 #     # forward
 #     input_ids=tensor_input_ids[step].unsqueeze(0).to(device)
