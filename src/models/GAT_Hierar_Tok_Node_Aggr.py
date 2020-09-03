@@ -48,7 +48,7 @@ with open(os.path.join(hotpot_qa_path, "hotpot_dev_distractor_v1.json"), "r") as
 
 # %%
 device = 'cuda'
-pretrained_weights = 'bert-large-cased'
+pretrained_weights = 'bert-base-cased'
 #pretrained_weights = 'bert-large-cased-whole-word-masking'
 
 # ## HotpotQA Processing
@@ -1185,8 +1185,6 @@ class Validation():
         num_valid_examples = 0
         for step, b_graph in enumerate(tqdm(self.validation_dataloader)):
             num_valid_examples += 1
-            if step < 700:
-                continue
             with torch.no_grad():
                 output = self.model(b_graph,
                                input_ids=self.tensor_input_ids[step].unsqueeze(0).to(device),
@@ -1319,9 +1317,9 @@ model_path = '/workspace/ml-workspace/thesis_git/HSGN/models'
 best_eval_f1 = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="w/yes fix + srl-ent-query2AT + AT-query classif. BiGRU initial emb Bottom-up 40K ent rel & Hierar. Tok. Aggr.  span_lossx2", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
+with neptune.create_experiment(name="378 FIXED w/yes fix. BiGRU initial emb Bottom-up 40K ent rel & Hierar. Tok. Aggr.  span_lossx2", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
     neptune.append_tag(["bigru initial emb", "bottom-up", "ent relation", "no SRL rel", "Query node", "multihop edges", "residual", "w_yn"])
-    neptune.set_property('server', 'IRGPU2')
+    neptune.set_property('server', 'IRGPU5')
     neptune.set_property('training_set_path', training_path)
     neptune.set_property('dev_set_path', dev_path)
 
