@@ -56,8 +56,8 @@ pretrained_weights = 'bert-base-cased'
 # ## Processing
 
 # %%
-training_path = os.path.join(data_path, "processed/training/heterog_20200831_bottomup_full_hierar_yn_q_srl_ent_2at/")
-dev_path = os.path.join(data_path, "processed/dev/heterog_20200831_bottomup_full_hierar_yn_q_srl_ent_2at/")
+training_path = os.path.join(data_path, "processed/training/heterog_20200902_yes_no_span/")
+dev_path = os.path.join(data_path, "processed/dev/heterog_20200902_yes_no_span/")
 
 with open(os.path.join(training_path, 'list_span_idx.p'), 'rb') as f:
     list_span_idx = pickle.load(f)
@@ -94,7 +94,8 @@ def natural_sort(l):
 def add_metadata2graph(graph, metadata):
     for (node, dict_node) in metadata.items():
         for (k, v) in dict_node.items():
-            graph.nodes[node].data[k] = torch.tensor(v)
+            if node in graph.ntypes:
+                graph.nodes[node].data[k] = torch.tensor(v)
     return graph
 
 
@@ -109,7 +110,7 @@ list_metadata_files = natural_sort([f for f in listdir(training_metadata_path) i
 list_graph_metadata_files = list(zip(list_graph_files, list_metadata_files))
 
 list_graphs = []
-for (g_file, metadata_file) in tqdm(list_graph_metadata_files[0:40000]):
+for (g_file, metadata_file) in tqdm(list_graph_metadata_files):
     if ".bin" in g_file:
         with open(os.path.join(training_graphs_path, g_file), "rb") as f:
             graph = pickle.load(f)
@@ -378,9 +379,9 @@ class HeteroRGCNLayer(nn.Module):
     def forward(self, G, feat_dict, bert_token_emb):
         # The input is a dictionary of node features for each type
         funcs = {}
-        G.nodes['AT'].data['h'] = self.feat_drop(feat_dict['AT']) # AT is never a src
-        if self.residual:
-            G.nodes['AT'].data['resid'] = feat_dict['AT']
+#         G.nodes['AT'].data['h'] = self.feat_drop(feat_dict['AT']) # AT is never a src
+#         if self.residual:
+#             G.nodes['AT'].data['resid'] = feat_dict['AT']
                 
         for srctype, etype, dsttype in G.canonical_etypes:
             G.nodes[srctype].data['h'] = self.feat_drop(feat_dict[srctype])
@@ -540,12 +541,12 @@ class HGNModel(BertPreTrainedModel):
         self.qa_outputs = nn.Linear(config.hidden_size, config.num_labels)
 
         # ans type prediction
-        self.dropout_ans_type = nn.Dropout(config.hidden_dropout_prob)
-        self.ans_type_classifier = nn.Sequential(nn.Linear(2*dict_params['out_feats'],
-                                                           int(dict_params['hidden_size_classifier'])),
-                                                 nn.ReLU(),
-                                                 nn.Linear(int(dict_params['hidden_size_classifier']),
-                                                           3))
+#         self.dropout_ans_type = nn.Dropout(config.hidden_dropout_prob)
+#         self.ans_type_classifier = nn.Sequential(nn.Linear(2*dict_params['out_feats'],
+#                                                            int(dict_params['hidden_size_classifier'])),
+#                                                  nn.ReLU(),
+#                                                  nn.Linear(int(dict_params['hidden_size_classifier']),
+#                                                            3))
         # init weights
         self.init_weights()
         # params
@@ -585,17 +586,17 @@ class HGNModel(BertPreTrainedModel):
         span_loss = None
         start_logits = None
         end_logits = None
-#         span_loss, start_logits, end_logits = self.span_prediction(sequence_output, start_positions, end_positions)
-#         assert not torch.isnan(start_logits).any()
-#         assert not torch.isnan(end_logits).any()
-        if train and graph_out['ans_type']['lbl'] == 0:
-            span_loss, start_logits, end_logits = self.span_prediction(sequence_output, start_positions, end_positions)
-            assert not torch.isnan(start_logits).any()
-            assert not torch.isnan(end_logits).any()
-        elif (not train) and graph_out['ans_type']['pred'] == 0:
-            span_loss, start_logits, end_logits = self.span_prediction(sequence_output, start_positions, end_positions)
-            assert not torch.isnan(start_logits).any()
-            assert not torch.isnan(end_logits).any()
+        span_loss, start_logits, end_logits = self.span_prediction(sequence_output, start_positions, end_positions)
+        assert not torch.isnan(start_logits).any()
+        assert not torch.isnan(end_logits).any()
+#         if train and graph_out['ans_type']['lbl'] == 0:
+#             span_loss, start_logits, end_logits = self.span_prediction(sequence_output, start_positions, end_positions)
+#             assert not torch.isnan(start_logits).any()
+#             assert not torch.isnan(end_logits).any()
+#         elif (not train) and graph_out['ans_type']['pred'] == 0:
+#             span_loss, start_logits, end_logits = self.span_prediction(sequence_output, start_positions, end_positions)
+#             assert not torch.isnan(start_logits).any()
+#             assert not torch.isnan(end_logits).any()
             
         # loss
         final_loss = 0.0
@@ -607,14 +608,14 @@ class HGNModel(BertPreTrainedModel):
             final_loss += self.weight_srl_loss*graph_out['srl']['loss']
         if graph_out['ent']['loss'] is not None:
             final_loss += self.weight_ent_loss*graph_out['ent']['loss']
-        if graph_out['ans_type']['loss'] is not None:
-            final_loss += self.weight_ans_type_loss*graph_out['ans_type']['loss']
+#         if graph_out['ans_type']['loss'] is not None:
+#             final_loss += self.weight_ans_type_loss*graph_out['ans_type']['loss']
         
         return {'loss': final_loss, 
                 'sent': graph_out['sent'], 
                 'ent': graph_out['ent'],
                 'srl': graph_out['srl'],
-                'ans_type': graph_out['ans_type'],
+#                 'ans_type': graph_out['ans_type'],
                 'span': {'loss': span_loss, 'start_logits': start_logits, 'end_logits': end_logits}}  
     
     def graph_forward(self, graph, bert_context_emb, train):
@@ -725,11 +726,11 @@ class HGNModel(BertPreTrainedModel):
             # shape [num_ent_nodes, 2]
 
         # ans type
-        input_ans_type_classif = self.dropout_ans_type(torch.cat((graph_emb['AT'], graph_emb['query']), dim=1))
-        logits_ans_type = self.ans_type_classifier(input_ans_type_classif).view(1, -1)
-        prediction_ans_type = torch.argmax(logits_ans_type, dim=1)
-        ans_type_label = graph.nodes['AT'].data['labels'].squeeze(0).to(device)
-        loss_ans_type = loss_fn_ans_type(logits_ans_type, ans_type_label)
+#         input_ans_type_classif = self.dropout_ans_type(torch.cat((graph_emb['AT'], graph_emb['query']), dim=1))
+#         logits_ans_type = self.ans_type_classifier(input_ans_type_classif).view(1, -1)
+#         prediction_ans_type = torch.argmax(logits_ans_type, dim=1)
+#         ans_type_label = graph.nodes['AT'].data['labels'].squeeze(0).to(device)
+#         loss_ans_type = loss_fn_ans_type(logits_ans_type, ans_type_label)
 
         # labels to cpu
         sent_labels = sent_labels.cpu().view(-1)
@@ -737,12 +738,12 @@ class HGNModel(BertPreTrainedModel):
             srl_labels = srl_labels.cpu().view(-1)
         if ent_labels is not None:
             ent_labels = ent_labels.cpu().view(-1)
-        ans_type_label = ans_type_label.cpu().view(-1)
+#         ans_type_label = ans_type_label.cpu().view(-1)
 
         return ({'sent': {'loss': loss_sent, 'probs': probs_sent, 'lbl': sent_labels},
                 'srl': {'loss': loss_srl, 'probs': probs_srl, 'lbl': srl_labels},
                 'ent': {'loss': loss_ent, 'probs': probs_ent, 'lbl': ent_labels},
-                'ans_type': {'loss': loss_ans_type, 'pred': prediction_ans_type, 'lbl': ans_type_label}
+#                 'ans_type': {'loss': loss_ans_type, 'pred': prediction_ans_type, 'lbl': ans_type_label}
                 },
                 graph_emb)
     
@@ -1211,13 +1212,13 @@ class Validation():
             #span prediction
             golden_ans = self.dataset[step]['answer']
             predicted_ans = ""
-#             predicted_ans = get_pred_ans_str(self.tensor_input_ids[step], output, tokenizer)
-            if output['ans_type']['pred'] == 0:
-                predicted_ans = get_pred_ans_str(self.tensor_input_ids[step], output, tokenizer)
-            elif output['ans_type']['pred'] == 1:
-                predicted_ans = 'yes'
-            else:
-                predicted_ans = 'no'
+            predicted_ans = get_pred_ans_str(self.tensor_input_ids[step], output, tokenizer)
+#             if output['ans_type']['pred'] == 0:
+#                 predicted_ans = get_pred_ans_str(self.tensor_input_ids[step], output, tokenizer)
+#             elif output['ans_type']['pred'] == 1:
+#                 predicted_ans = 'yes'
+#             else:
+#                 predicted_ans = 'no'
             ans_em, ans_prec, ans_recall = self.update_answer_metrics(metrics, predicted_ans, golden_ans)
             # joint
             self.update_joint_metrics(metrics, ans_em, ans_prec, ans_recall, sp_em, sp_prec, sp_recall)                
@@ -1317,9 +1318,9 @@ model_path = '/workspace/ml-workspace/thesis_git/HSGN/models'
 best_eval_f1 = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="378 FIXED w/yes fix. BiGRU initial emb Bottom-up 40K ent rel & Hierar. Tok. Aggr.  span_lossx2", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
-    neptune.append_tag(["bigru initial emb", "bottom-up", "ent relation", "no SRL rel", "Query node", "multihop edges", "residual", "w_yn"])
-    neptune.set_property('server', 'IRGPU5')
+with neptune.create_experiment(name="40K yes_no span BiGRU initial emb Bottom-up ent rel & Hierar. Tok. Aggr.  span_lossx2", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
+    neptune.append_tag(["yes_no span", "bigru initial emb", "bottom-up", "ent relation", "no SRL rel", "Query node", "multihop edges", "residual", "w_yn"])
+    neptune.set_property('server', 'IRGPU2')
     neptune.set_property('training_set_path', training_path)
     neptune.set_property('dev_set_path', dev_path)
 
@@ -1382,7 +1383,7 @@ with neptune.create_experiment(name="378 FIXED w/yes fix. BiGRU initial emb Bott
             sent_loss = output['sent']['loss']
             ent_loss = output['ent']['loss']
             srl_loss = output['srl']['loss']
-            ans_type_loss = output['ans_type']['loss']
+#             ans_type_loss = output['ans_type']['loss']
             span_loss = output['span']['loss']
             # neptune
             neptune.log_metric("total_loss", total_loss.detach().item())
@@ -1394,8 +1395,8 @@ with neptune.create_experiment(name="378 FIXED w/yes fix. BiGRU initial emb Bott
                 neptune.log_metric("ent_loss", ent_loss.detach().item())
             if span_loss is not None:
                 neptune.log_metric("span_loss", span_loss.detach().item())
-            if ans_type_loss is not None:
-                neptune.log_metric("ans_type_loss", ans_type_loss.detach().item())
+#             if ans_type_loss is not None:
+#                 neptune.log_metric("ans_type_loss", ans_type_loss.detach().item())
 
             # backpropagation
             total_loss.backward()
