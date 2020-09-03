@@ -1,23 +1,17 @@
 from .graph_creation import Dataset
 from .preprocessing import NER_stanza
 from .preprocessing import SRL
-import os
-import json
 import torch
 
 
 def add_metadata2graph(graph, metadata):
     for (node, dict_node) in metadata.items():
         for (k, v) in dict_node.items():
-            graph.nodes[node].data[k] = torch.tensor(v)
+            if node in graph.ntypes:
+                graph.nodes[node].data[k] = torch.tensor(v)
     return graph
 
-def create_dataloader(data_path):
-    hotpotqa_path = 'external/'
-    print("Loading HotpotQA")
-    with open(os.path.join(data_path, hotpotqa_path, "input.json"), "r") as f:
-        hotpot = json.load(f)
-    hotpot = hotpot[0:5]
+def create_dataloader(hotpot):
     # extract entities and SRL
     ner = NER_stanza()
     srl = SRL()
@@ -45,8 +39,15 @@ def create_dataloader(data_path):
             list_graphs[g_idx].edges['ent2ent_rel'].data['rel_type'] = torch.tensor([edge['rel_type'] for edge in list_dict_edge])
             list_graphs[g_idx].edges['ent2ent_rel'].data['span_idx'] = torch.tensor([edge['span_idx'] for edge in list_dict_edge])
 
-    return {'dataloader': list_graphs,
-            'metadata': list_g_metadata,
+    list_graph_metadata = list(zip(list_graphs, list_g_metadata))
+    list_graphs2 = []
+    for (g, metadata) in list_graph_metadata:
+        # add metadata to the graph
+        graph = add_metadata2graph(g, metadata)
+        list_graphs2.append(graph)
+
+    return {'list_graphs': list_graphs2,
+            'list_context': list_context,
             'list_span_idx': list_span_idx}
 
 
