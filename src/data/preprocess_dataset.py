@@ -11,7 +11,8 @@ def add_metadata2graph(graph, metadata):
                 graph.nodes[node].data[k] = torch.tensor(v)
     return graph
 
-def create_dataloader(hotpot):
+
+def create_dataloader(hotpot, dict_ins2dict_doc2pred):
     # extract entities and SRL
     ner = NER_stanza()
     srl = SRL()
@@ -26,7 +27,8 @@ def create_dataloader(hotpot):
 
     print("Data loaded. Creating graphs")
     train_dataset = Dataset(hotpot, list_hotpot_train_ner, dict_ins_doc_sent_srl_triples,
-                            dict_ins_query_srl_triples, list_ent_query_training, batch_size=1)
+                            dict_ins_query_srl_triples, list_ent_query_training, 
+                            dict_ins2dict_doc2pred=dict_ins2dict_doc2pred, batch_size=1)
     (list_graphs,
         list_g_metadata,
         list_context,

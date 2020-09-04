@@ -18,31 +18,32 @@ hotpot = hotpot[0:2]
 
 device = 'cuda'
 doc_retr_model_path = '/workspace/ml-workspace/thesis_git/HSGN/models/doc_retrieval'
+print("Loading the document retrieval model")
 doc_retr = DocumentRetrieval(device, doc_retr_model_path)
-doc_retr.predict_relevant_docs(hotpot)
+print("Computing the relevant documents")
+dict_ins2dict_doc2pred = doc_retr.predict_relevant_docs(hotpot)
+print(dict_ins2dict_doc2pred)
+output = create_dataloader(hotpot, dict_ins2dict_doc2pred)
+# list_graphs = output['list_graphs']
+# list_context = output['list_context']
+# list_span_idx = output['list_span_idx']
+# print("Loading model")
+# model = HGNModel.from_pretrained(model_path)
+# model.cuda()
 
+# list_input_ids = [context['input_ids'] for context in list_context]
+# list_token_type_ids = [context['token_type_ids'] for context in list_context]
+# list_attention_masks = [context['attention_mask'] for context in list_context]
 
-output = create_dataloader(hotpot)
-list_graphs = output['list_graphs']
-list_context = output['list_context']
-list_span_idx = output['list_span_idx']
-print("Loading model")
-model = HGNModel.from_pretrained(model_path)
-model.cuda()
+# tensor_input_ids = torch.tensor(list_input_ids)
+# tensor_token_type_ids = torch.tensor(list_token_type_ids)
+# tensor_attention_masks = torch.tensor(list_attention_masks)
 
-list_input_ids = [context['input_ids'] for context in list_context]
-list_token_type_ids = [context['token_type_ids'] for context in list_context]
-list_attention_masks = [context['attention_mask'] for context in list_context]
-
-tensor_input_ids = torch.tensor(list_input_ids)
-tensor_token_type_ids = torch.tensor(list_token_type_ids)
-tensor_attention_masks = torch.tensor(list_attention_masks)
-
-print("Staring evaluation")
-validation = Validation(model, hotpot, list_graphs,
-                        tensor_input_ids, tensor_attention_masks,
-                        tensor_token_type_ids,
-                        list_span_idx)
-metrics = validation.do_validation()
-print(metrics)
-print("Done")
+# print("Staring evaluation")
+# validation = Validation(model, hotpot, list_graphs,
+#                         tensor_input_ids, tensor_attention_masks,
+#                         tensor_token_type_ids,
+#                         list_span_idx)
+# metrics = validation.do_validation()
+# print(metrics)
+# print("Done")
