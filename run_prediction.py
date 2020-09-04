@@ -1,5 +1,6 @@
 from src.data.preprocess_dataset import create_dataloader
 from src.models.model import HGNModel, Validation
+from src.models.document_retrieval import DocumentRetrieval
 import torch
 import json
 import os
@@ -14,6 +15,12 @@ print("Loading HotpotQA")
 with open(os.path.join(data_path, hotpotqa_path, "input.json"), "r") as f:
     hotpot = json.load(f)
 hotpot = hotpot[0:2]
+
+device = 'cuda'
+doc_retr_model_path = '/workspace/ml-workspace/thesis_git/HSGN/models/doc_retrieval'
+doc_retr = DocumentRetrieval(device, doc_retr_model_path)
+doc_retr.predict_relevant_docs(hotpot)
+
 
 output = create_dataloader(hotpot)
 list_graphs = output['list_graphs']
