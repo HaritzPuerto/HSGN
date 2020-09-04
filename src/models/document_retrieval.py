@@ -47,7 +47,7 @@ class DocumentRetrieval():
                         add_special_tokens=True,
                         max_length=128,
                         pad_to_max_length=True,
-                        #truncation=True,
+                        truncation=True,
                         return_attention_mask=True,
                         return_tensors='pt'
                 )
