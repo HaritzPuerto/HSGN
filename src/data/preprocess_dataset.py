@@ -2,6 +2,7 @@ from .graph_creation import Dataset
 from .preprocessing import NER_stanza
 from .preprocessing import SRL
 import torch
+from tqdm import tqdm
 
 
 def add_metadata2graph(graph, metadata):
@@ -12,7 +13,7 @@ def add_metadata2graph(graph, metadata):
     return graph
 
 
-def create_dataloader(hotpot, dict_ins2dict_doc2pred):
+def create_dataloader(hotpot, dict_ins2dict_doc2pred, pretrained_weights):
     # extract entities and SRL
     ner = NER_stanza()
     srl = SRL()
@@ -28,7 +29,8 @@ def create_dataloader(hotpot, dict_ins2dict_doc2pred):
     print("Data loaded. Creating graphs")
     train_dataset = Dataset(hotpot, list_hotpot_train_ner, dict_ins_doc_sent_srl_triples,
                             dict_ins_query_srl_triples, list_ent_query_training, 
-                            dict_ins2dict_doc2pred=dict_ins2dict_doc2pred, batch_size=1)
+                            dict_ins2dict_doc2pred=dict_ins2dict_doc2pred, batch_size=1,
+                            pretrained_weights=pretrained_weights)
     (list_graphs,
         list_g_metadata,
         list_context,
@@ -43,7 +45,7 @@ def create_dataloader(hotpot, dict_ins2dict_doc2pred):
 
     list_graph_metadata = list(zip(list_graphs, list_g_metadata))
     list_graphs2 = []
-    for (g, metadata) in list_graph_metadata:
+    for (g, metadata) in tqdm(list_graph_metadata):
         # add metadata to the graph
         graph = add_metadata2graph(g, metadata)
         list_graphs2.append(graph)

@@ -21,9 +21,6 @@ torch.manual_seed(random_seed)
 torch.cuda.manual_seed_all(random_seed)
 # %%
 device = 'cuda'
-pretrained_weights = 'bert-base-cased'
-
-
 
 # %%
 def find_sublist_idx(x: list, y: list) -> int:
@@ -78,7 +75,7 @@ MAX_LEN = 512
 class Dataset():
     def __init__(self, dataset=None, list_hotpot_ner=None, dict_ins_doc_sent_srl_triples=None,
                  dict_ins_query_triples=None, list_entities_query=None, dict_ins2dict_doc2pred=None,
-                 batch_size=None, max_len=512):
+                 batch_size=None, max_len=512, pretrained_weights=None):
         self.tokenizer = BertTokenizer.from_pretrained(pretrained_weights,
                                                        do_basic_tokenize=True,
                                                        clean_text=False)
@@ -782,8 +779,9 @@ class Dataset():
         graph_metadata['sent']['st_end_idx'] =  np.array(list_sent_st_end_idx)
 #         graph_metadata['sent']['list_context_idx'] = np.array(list_sent_context_idx).reshape(-1,1)
         # srl metadata
-        graph_metadata['srl'] = dict()
-        graph_metadata['srl']['st_end_idx'] =  np.array(list_srl_st_end_idx)
+        if list_srl_st_end_idx != []:
+            graph_metadata['srl'] = dict()
+            graph_metadata['srl']['st_end_idx'] =  np.array(list_srl_st_end_idx)
 #         graph_metadata['srl']['list_context_idx'] = np.array(list_srl_context_idx).reshape(-1,1)
         # srl_loc metadata
         if list_srl_loc2srl != []:

@@ -16,13 +16,14 @@ print("Loading HotpotQA")
 with open(os.path.join(data_path, hotpotqa_path, "hotpot_dev_distractor_v1.json"), "r") as f:
     hotpot = json.load(f)
 device = 'cuda'
+pretrained_weights = 'bert-large-cased-whole-word-masking'
 doc_retr_model_path = '/workspace/ml-workspace/thesis_git/HSGN/models/doc_retrieval'
 print("Loading the document retrieval model")
 doc_retr = DocumentRetrieval(device, doc_retr_model_path)
 print("Computing the relevant documents")
 dict_ins2dict_doc2pred = doc_retr.predict_relevant_docs(hotpot)
 print("Creating graphs for the predicted relevant documents")
-output = create_dataloader(hotpot, dict_ins2dict_doc2pred)
+output = create_dataloader(hotpot, dict_ins2dict_doc2pred, pretrained_weights)
 list_graphs = output['list_graphs']
 list_context = output['list_context']
 list_span_idx = output['list_span_idx']

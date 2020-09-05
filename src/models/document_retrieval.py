@@ -64,14 +64,21 @@ class DocumentRetrieval():
         prediction_dataloader = DataLoader(prediction_data, sampler=prediction_sampler, batch_size=batch_size)
         return prediction_dataloader
 
-    def __convert_preds2dict(self, hotpot, preds):
+    def __convert_preds2dict(self, hotpot, softmax_predictions):
         doc_num = 0
         dict_ins2dict_doc2pred = dict()
         for ins_idx, ins in enumerate(tqdm(hotpot)):
             dict_doc2pred = dict()
+            num_docs = len(ins['context'])
+            probs_posit = softmax_predictions[doc_num:doc_num + num_docs][:, 1]
+            _, preds = list(probs_posit.topk(2, dim=0))
+            preds = preds.numpy()
+            num_docs += doc_num
             for d_idx, doc in enumerate(ins['context']):
-                dict_doc2pred[d_idx] = preds[doc_num]
-                doc_num += 1
+                if d_idx in preds:
+                    dict_doc2pred[d_idx] = 1
+                else:
+                    dict_doc2pred[d_idx] = 0
             dict_ins2dict_doc2pred[ins_idx] = dict_doc2pred
         return dict_ins2dict_doc2pred
 
@@ -94,5 +101,4 @@ class DocumentRetrieval():
           # Store predictions and true labels
             predictions.extend(logits)
         softmax_predictions = torch.nn.functional.softmax(torch.tensor(predictions), dim=1)
-        preds = torch.argmax(softmax_predictions, dim=1).numpy()
-        return preds
+        return softmax_predictions
