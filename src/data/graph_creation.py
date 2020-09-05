@@ -709,31 +709,42 @@ class Dataset():
 #             ('doc', 'doc2sent', 'sent'): list_doc2sent,  # lbl: [DOC2SENT]
                      ('sent', 'sent2doc', 'doc'): list_sent2doc,  # lbl: [SENT2DOC]
 #                      ('sent', 'sent2srl', 'srl'): list_sent2srl,  # lbl: [SENT2SRL]
-                     ('srl', 'srl2sent', 'sent'): list_srl2sent,  # lbl: [SRL2SENT]
+                     
 #                      ('srl', 'srl2ent', 'ent'): list_srl2ent,     # lbl: [SRL2ENT]
                      # to token
 #                      ('doc', 'doc2tok', 'tok'): list_doc2tok,     # lbl: [DOC2TOK]
 #                      ('tok', 'tok2doc', 'doc'): list_tok2doc,     # lbl: [TOK2DOC]
 #                      ('sent', 'sent2tok', 'tok'): list_sent2tok,  # lbl: [SENT2TOK]
 #                      ('tok', 'tok2sent', 'sent'): list_tok2sent,  # lbl: [TOK2SENT]
-                     ('srl', 'srl2tok', 'tok'): list_srl2tok,     # lbl: [SRL2TOK]
+                     
 #                      ('tok', 'tok2srl', 'srl'): list_tok2srl,     # lbl: [TOK2SRL]
 #                      ('tok', 'tok2ent', 'ent'): list_tok2ent,     # lbl: [TOK2ENT]
                      # end hierarchical
                      # same-level edges
                      ('doc', 'doc2doc_self', 'doc'): list_doc2doc,         # lbl: [DOC2DOC_SELF]
                      ('sent', 'sent2sent', 'sent'): list_sent2sent,   # lbl: [SENT2SENT]
-                     ('srl', 'srl2srl', 'srl'): list_srl2srl,         # lbl: [SRL2SRL]
-                     ('srl', 'srl2self', 'srl'): list_srl2self,         # lbl: [SRL2SELF]
+                     
+                     
                      ('tok', 'token2token_self', 'tok'): list_token2token, # lbl: [TOK2TOK_SELF]
                      # multi-hop edges
-                     ('srl', 'srl_multihop', 'srl'): list_srl_multihop,
+                     
                      ('sent', 'sent_multihop', 'sent'): list_sent_multihop,
                      # Answer type
                     #  ('sent', 'sent2AT', 'AT'): list_sent2at, # lbl: [SENT2AT]
 #                      ('srl', 'srl2AT', 'AT'): list_srl2at, # lbl: [SRL2AT]
 #                      ('query', 'query2AT', 'AT'): [(0,0)], # lbl: [QUERY2AT]
                     }
+
+        if list_srl2sent != []:
+            dict_edges[('srl', 'srl2sent', 'sent')] = list_srl2sent # lbl: [SRL2SENT]
+        if list_srl2tok != []:
+            dict_edges[('srl', 'srl2tok', 'tok')] = list_srl2tok     # lbl: [SRL2TOK]
+        if list_srl_multihop != []:
+            dict_edges[('srl', 'srl_multihop', 'srl')] = list_srl_multihop # lbl: [SRL2SRL_MH]
+        if list_srl2srl != []:
+            dict_edges[('srl', 'srl2srl', 'srl')] = list_srl2srl         # lbl: [SRL2SRL]
+        if list_srl2self != []:
+            dict_edges[('srl', 'srl2self', 'srl')] = list_srl2self         # lbl: [SRL2SELF]
         if list_ent2srl != []:
             dict_edges[('ent', 'ent2srl', 'srl')] = list_ent2srl     # lbl: [ENT2SRL]
         if list_ent2tok != []:

@@ -12,9 +12,9 @@ model_path = '/workspace/ml-workspace/thesis_git/HSGN/models'
 print("Preprocessing data")
 hotpotqa_path = 'external/'
 print("Loading HotpotQA")
-with open(os.path.join(data_path, hotpotqa_path, "input.json"), "r") as f:
+#hotpot_dev_distractor_v1
+with open(os.path.join(data_path, hotpotqa_path, "hotpot_dev_distractor_v1.json"), "r") as f:
     hotpot = json.load(f)
-
 device = 'cuda'
 doc_retr_model_path = '/workspace/ml-workspace/thesis_git/HSGN/models/doc_retrieval'
 print("Loading the document retrieval model")

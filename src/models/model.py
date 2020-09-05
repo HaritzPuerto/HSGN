@@ -250,18 +250,22 @@ class HeteroRGCNLayer(nn.Module):
                 funcs[etype] = (self.message_func_regular_node, self.reduce_func)
         G.multi_update_all(funcs, 'sum')
         ## update tokens
-        G['srl2tok'].update_all(self.message_func_2tok, fn.sum('m', 'h_srl'))
+        if 'srl' in G.ntypes:
+            G['srl2tok'].update_all(self.message_func_2tok, fn.sum('m', 'h_srl'))
         if 'ent' in G.ntypes:
             G['ent2tok'].update_all(self.message_func_2tok, fn.sum('m', 'h_ent'))
         #batched all tokens since we want to put into the GRU (srl, ent, hidden=tok) so batch size = 512
-        h_tok = G.nodes['tok'].data['h'].view(1,-1,self.in_size)
-        h_srl = G.nodes['tok'].data.pop('h_srl').view(1,-1,self.in_size)
-        gru_input = h_srl
+        h_tok = G.nodes['tok'].data['h'].view(1, -1, self.in_size)
+        gru_input = h_tok
+        initial_hidden = h_tok
+        if 'h_srl' in G.nodes['tok'].data:
+            h_srl = G.nodes['tok'].data.pop('h_srl').view(1, -1, self.in_size)
+            initial_hidden = h_srl
         if 'h_ent' in G.nodes['tok'].data:
             # there can be an instance without entities (not common anyway)
-            h_ent = G.nodes['tok'].data.pop('h_ent').view(1,-1,self.in_size)
-            gru_input = torch.cat((h_ent, h_tok), dim=0)            
-        G.nodes['tok'].data['h'] = self.gru_node2tok(gru_input, h_srl)[0][-1]
+            h_ent = G.nodes['tok'].data.pop('h_ent').view(1, -1, self.in_size)
+            gru_input = torch.cat((h_ent, h_tok), dim=0)           
+        G.nodes['tok'].data['h'] = self.gru_node2tok(gru_input, initial_hidden)[0][-1]
         
         out = None
         if self.residual:
@@ -507,10 +511,13 @@ class HGNModel(BertPreTrainedModel):
             logits_sent = self.sent_classifier(torch.cat((graph_emb['sent'],
                                                           initial_graph_emb['sent']), dim=1))
             assert not torch.isnan(logits_sent).any()
-            logits_srl = self.srl_classifier(torch.cat((graph_emb['srl'],
-                                                        initial_graph_emb['srl']), dim=1))
+            if 'srl' in graph.ntypes:
+                logits_srl = self.srl_classifier(torch.cat((graph_emb['srl'],
+                                                            initial_graph_emb['srl']), dim=1))
+                assert not torch.isnan(logits_srl).any()
+            else:
+                logits_srl = None
             # shape [num_ent_nodes, 2] 
-            assert not torch.isnan(logits_srl).any()
             logits_ent = None
             ent_labels = None
             if 'ent' in graph.ntypes:

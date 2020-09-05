@@ -19,11 +19,11 @@ def create_dataloader(hotpot, dict_ins2dict_doc2pred):
     print("Extracting named entities from the query")
     list_ent_query_training = ner.extract_named_entities_from_query(hotpot)
     print("Extracting named entities")
-    list_hotpot_train_ner = ner.extract_named_entities(hotpot)
+    list_hotpot_train_ner = ner.extract_named_entities(hotpot, dict_ins2dict_doc2pred)
     print("Extracting SRL arguments from the query")
     dict_ins_query_srl_triples = srl.extract_srl_from_query(hotpot)
     print("Extracting SRL arguments")
-    dict_ins_doc_sent_srl_triples = srl.extract_srl(hotpot)
+    dict_ins_doc_sent_srl_triples = srl.extract_srl(hotpot, dict_ins2dict_doc2pred)
 
     print("Data loaded. Creating graphs")
     train_dataset = Dataset(hotpot, list_hotpot_train_ner, dict_ins_doc_sent_srl_triples,
