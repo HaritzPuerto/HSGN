@@ -35,7 +35,8 @@ np.random.seed(random_seed)
 torch.manual_seed(random_seed)
 torch.cuda.manual_seed_all(random_seed)
 
-pretrained_weights = 'bert-base-cased'
+#pretrained_weights = 'bert-base-cased'
+pretrained_weights = 'bert-large-cased-whole-word-masking'
 device = 'cuda'
 
 weights = torch.tensor([1., 30.9, 31.], device=device)
@@ -250,18 +251,22 @@ class HeteroRGCNLayer(nn.Module):
                 funcs[etype] = (self.message_func_regular_node, self.reduce_func)
         G.multi_update_all(funcs, 'sum')
         ## update tokens
-        G['srl2tok'].update_all(self.message_func_2tok, fn.sum('m', 'h_srl'))
+        if 'srl' in G.ntypes:
+            G['srl2tok'].update_all(self.message_func_2tok, fn.sum('m', 'h_srl'))
         if 'ent' in G.ntypes:
             G['ent2tok'].update_all(self.message_func_2tok, fn.sum('m', 'h_ent'))
         #batched all tokens since we want to put into the GRU (srl, ent, hidden=tok) so batch size = 512
-        h_tok = G.nodes['tok'].data['h'].view(1,-1,self.in_size)
-        h_srl = G.nodes['tok'].data.pop('h_srl').view(1,-1,self.in_size)
-        gru_input = h_srl
+        h_tok = G.nodes['tok'].data['h'].view(1, -1, self.in_size)
+        gru_input = h_tok
+        initial_hidden = h_tok
+        if 'h_srl' in G.nodes['tok'].data:
+            h_srl = G.nodes['tok'].data.pop('h_srl').view(1, -1, self.in_size)
+            initial_hidden = h_srl
         if 'h_ent' in G.nodes['tok'].data:
             # there can be an instance without entities (not common anyway)
-            h_ent = G.nodes['tok'].data.pop('h_ent').view(1,-1,self.in_size)
-            gru_input = torch.cat((h_ent, h_tok), dim=0)            
-        G.nodes['tok'].data['h'] = self.gru_node2tok(gru_input, h_srl)[0][-1]
+            h_ent = G.nodes['tok'].data.pop('h_ent').view(1, -1, self.in_size)
+            gru_input = torch.cat((h_ent, h_tok), dim=0)           
+        G.nodes['tok'].data['h'] = self.gru_node2tok(gru_input, initial_hidden)[0][-1]
         
         out = None
         if self.residual:
@@ -357,7 +362,7 @@ class HGNModel(BertPreTrainedModel):
 #                            attn_drop = dict_params['attn_drop'])
         # Initial Node Embedding
         self.bigru = nn.GRU(dict_params['in_feats'], dict_params['in_feats'], 
-                                    dropout = dict_params['feat_drop'], bidirectional=True)
+                            bidirectional=True)
         self.gru_aggregation = nn.Linear(2*dict_params['in_feats'], dict_params['in_feats'])
         # Graph Neural Network
         self.rgcn = HeteroRGCN(dict_params['in_feats'], dict_params['in_feats'],
@@ -439,44 +444,24 @@ class HGNModel(BertPreTrainedModel):
         span_loss, start_logits, end_logits = self.span_prediction(sequence_output, start_positions, end_positions)
         assert not torch.isnan(start_logits).any()
         assert not torch.isnan(end_logits).any()
-#         if train and graph_out['ans_type']['lbl'] == 0:
-#             span_loss, start_logits, end_logits = self.span_prediction(sequence_output, start_positions, end_positions)
-#             assert not torch.isnan(start_logits).any()
-#             assert not torch.isnan(end_logits).any()
-#         elif (not train) and graph_out['ans_type']['pred'] == 0:
-#             span_loss, start_logits, end_logits = self.span_prediction(sequence_output, start_positions, end_positions)
-#             assert not torch.isnan(start_logits).any()
-#             assert not torch.isnan(end_logits).any()
-            
-        # loss
-        final_loss = 0.0
-        if span_loss is not None:
-            final_loss += self.weight_span_loss*span_loss
-        if graph_out['sent']['loss'] is not None:
-            final_loss += self.weight_sent_loss*graph_out['sent']['loss']
-        if graph_out['srl']['loss'] is not None:
-            final_loss += self.weight_srl_loss*graph_out['srl']['loss']
-        if graph_out['ent']['loss'] is not None:
-            final_loss += self.weight_ent_loss*graph_out['ent']['loss']
-#         if graph_out['ans_type']['loss'] is not None:
-#             final_loss += self.weight_ans_type_loss*graph_out['ans_type']['loss']
-        
-        return {'loss': final_loss, 
+
+        return { 
                 'sent': graph_out['sent'], 
                 'ent': graph_out['ent'],
                 'srl': graph_out['srl'],
-#                 'ans_type': graph_out['ans_type'],
-                'span': {'loss': span_loss, 'start_logits': start_logits, 'end_logits': end_logits}}  
+                'span': {'start_logits': start_logits, 'end_logits': end_logits}}  
     
     def graph_forward(self, graph, bert_context_emb, train):
         # create graph initial embedding #
         graph_emb = self.graph_initial_embedding(graph, bert_context_emb)
         for (k,v) in graph_emb.items():
             assert not torch.isnan(v).any()
-        # graph_emb shape [num_nodes, in_feats]    
-        sample_sent_nodes = self.sample_sent_nodes(graph)
-        sample_srl_nodes = self.sample_srl_nodes(graph)
-        sample_ent_nodes = self.sample_ent_nodes(graph)
+        # graph_emb shape [num_nodes, in_feats] 
+        #
+        if train:   
+            sample_sent_nodes = self.sample_sent_nodes(graph)
+            sample_srl_nodes = self.sample_srl_nodes(graph)
+            sample_ent_nodes = self.sample_ent_nodes(graph)
         initial_graph_emb = graph_emb # for skip-connection
         
         # update graph embedding #
@@ -527,10 +512,13 @@ class HGNModel(BertPreTrainedModel):
             logits_sent = self.sent_classifier(torch.cat((graph_emb['sent'],
                                                           initial_graph_emb['sent']), dim=1))
             assert not torch.isnan(logits_sent).any()
-            logits_srl = self.srl_classifier(torch.cat((graph_emb['srl'],
-                                                        initial_graph_emb['srl']), dim=1))
+            if 'srl' in graph.ntypes:
+                logits_srl = self.srl_classifier(torch.cat((graph_emb['srl'],
+                                                            initial_graph_emb['srl']), dim=1))
+                assert not torch.isnan(logits_srl).any()
+            else:
+                logits_srl = None
             # shape [num_ent_nodes, 2] 
-            assert not torch.isnan(logits_srl).any()
             logits_ent = None
             ent_labels = None
             if 'ent' in graph.ntypes:
@@ -538,18 +526,9 @@ class HGNModel(BertPreTrainedModel):
                                                             initial_graph_emb['ent']), dim=1))
                 # shape [num_ent_nodes, 2]
                 assert not torch.isnan(logits_ent).any()
-                ent_labels = graph.nodes['ent'].data['labels'].to(device)
                 # shape [num_srl_nodes, 1]
-                
-            # labels
-            sent_labels = graph.nodes['sent'].data['labels'].to(device)
-            # shape [num_sent_nodes, 1]
-            srl_labels = graph.nodes['srl'].data['labels'].to(device)
-            # shape [num_sampled_srl_nodes, 1]
-            
-           
+
         # sent loss
-        loss_sent = loss_fn(logits_sent, sent_labels.view(-1).long())
         probs_sent = F.softmax(logits_sent, dim=1).cpu()
         # shape [num_sent_nodes, 2]
         
@@ -560,7 +539,6 @@ class HGNModel(BertPreTrainedModel):
             loss_srl = None
             probs_srl = None
         else:
-            loss_srl = loss_fn(logits_srl, srl_labels.view(-1).long())
             probs_srl = F.softmax(logits_srl, dim=1).cpu()
             # shape [num_srl_nodes, 2]
 
@@ -571,7 +549,6 @@ class HGNModel(BertPreTrainedModel):
             loss_ent = None
             probs_ent = None
         else:        
-            loss_ent = loss_fn(logits_ent, ent_labels.view(-1).long())
             probs_ent = F.softmax(logits_ent, dim=1).cpu()
             # shape [num_ent_nodes, 2]
 
@@ -582,18 +559,9 @@ class HGNModel(BertPreTrainedModel):
 #         ans_type_label = graph.nodes['AT'].data['labels'].squeeze(0).to(device)
 #         loss_ans_type = loss_fn_ans_type(logits_ans_type, ans_type_label)
 
-        # labels to cpu
-        sent_labels = sent_labels.cpu().view(-1)
-        if srl_labels is not None:
-            srl_labels = srl_labels.cpu().view(-1)
-        if ent_labels is not None:
-            ent_labels = ent_labels.cpu().view(-1)
-#         ans_type_label = ans_type_label.cpu().view(-1)
-
-        return ({'sent': {'loss': loss_sent, 'probs': probs_sent, 'lbl': sent_labels},
-                'srl': {'loss': loss_srl, 'probs': probs_srl, 'lbl': srl_labels},
-                'ent': {'loss': loss_ent, 'probs': probs_ent, 'lbl': ent_labels},
-#                 'ans_type': {'loss': loss_ans_type, 'pred': prediction_ans_type, 'lbl': ans_type_label}
+        return ({'sent': {'probs': probs_sent},
+                'srl': {'probs': probs_srl},
+                'ent': {'probs': probs_ent},
                 },
                 graph_emb)
     
@@ -720,17 +688,12 @@ class HGNModel(BertPreTrainedModel):
             start_loss = loss_fct(start_logits, start_positions)
             end_loss = loss_fct(end_logits, end_positions)
             total_loss = (start_loss + end_loss) / 2
-        return (total_loss,  start_logits, end_logits)
-
-def get_pred_ans_str(input_ids, output, tokenizer):
-    st = torch.argmax(output['span']['start_logits'], dim=1).item()
-    end = torch.argmax(output['span']['end_logits'], dim=1).item()
-    return tokenizer.decode(input_ids[st:end])
+        return (total_loss, start_logits, end_logits)
 
 class Validation():
 
     def __init__(self, model, dataset, validation_dataloader,
-                 tensor_input_ids, tensor_attention_masks, tensor_token_type_ids, list_span_idx):
+                 tensor_input_ids, tensor_attention_masks, tensor_token_type_ids):
         self.model = model
         self.model.eval()
         self.dataset = dataset
@@ -738,256 +701,40 @@ class Validation():
         self.tensor_input_ids = tensor_input_ids
         self.tensor_attention_masks = tensor_attention_masks
         self.tensor_token_type_ids = tensor_token_type_ids
-        self.list_span_idx = list_span_idx
         self.tokenizer = BertTokenizer.from_pretrained(pretrained_weights)
-        
-    def do_validation(self):       
-        metrics = {'validation_loss': 0, 
-                   'ans_em': 0, 'ans_f1': 0, 'ans_prec': 0 , 'ans_recall': 0,
-                   'sp_em': 0, 'sp_f1': 0, 'sp_prec': 0, 'sp_recall': 0,
-                   'joint_em': 0, 'joint_f1': 0, 'joint_prec': 0, 'joint_recall': 0, 
-                   'srl_em': 0, 'srl_f1': 0, 'srl_prec': 0, 'srl_recall': 0,
-                   'srl_recall@1': 0, 'srl_recall@3': 0, 'srl_recall@5': 0,
-                   'ent_em': 0, 'ent_f1': 0, 'ent_prec': 0, 'ent_recall': 0,
-                   'ent_recall@1': 0, 'ent_recall@3': 0, 'ent_recall@5': 0,
-                   }
-        # Evaluate data for one epoch       
-        num_valid_examples = 0
-        for step, b_graph in enumerate(tqdm(self.validation_dataloader)):
-            num_valid_examples += 1
+
+    def get_answer_predictions(self, dict_ins2dict_doc2pred):
+        output_pred_sp = {}
+        output_predictions_ans = {}
+        for step, b_graph in enumerate(tqdm(self.validation_dataloader)): 
             with torch.no_grad():
                 output = self.model(b_graph,
                                input_ids=self.tensor_input_ids[step].unsqueeze(0).to(device),
                                attention_mask=self.tensor_attention_masks[step].unsqueeze(0).to(device),
                                token_type_ids=self.tensor_token_type_ids[step].unsqueeze(0).to(device), 
-                               start_positions=torch.tensor([self.list_span_idx[step][0]], device=device),
-                               end_positions=torch.tensor([self.list_span_idx[step][1]], device=device), train=False)
-                
-            # Accumulate the validation loss.
-            metrics['validation_loss'] += output['loss'].item()
-            # Sentence evaluation
-            sent_labels = output['sent']['lbl']
-            prediction_sent = torch.argmax(output['sent']['probs'], dim=1)
-            sp_em, sp_prec, sp_recall = self.update_sp_metrics(metrics, prediction_sent, sent_labels)
-            # srl
-            prediction_srl = torch.argmax(output['srl']['probs'], dim=1)
-            srl_labels = output['srl']['lbl']
-            self.update_srl_metrics(metrics, prediction_srl, srl_labels, output['srl']['probs'][:,1])
-            # ent
-            if output['ent']['probs'] is not None:
-                prediction_ent = torch.argmax(output['ent']['probs'], dim=1)
-                ent_labels = output['ent']['lbl']
-                self.update_ent_metrics(metrics, prediction_ent, ent_labels, output['ent']['probs'][:,1])
-            #span prediction
-            golden_ans = self.dataset[step]['answer']
+                               train=False)
+            #answer
             predicted_ans = ""
-            predicted_ans = get_pred_ans_str(self.tensor_input_ids[step], output, self.tokenizer)
-#             if output['ans_type']['pred'] == 0:
-#                 predicted_ans = get_pred_ans_str(self.tensor_input_ids[step], output, tokenizer)
-#             elif output['ans_type']['pred'] == 1:
-#                 predicted_ans = 'yes'
-#             else:
-#                 predicted_ans = 'no'
-            ans_em, ans_prec, ans_recall = self.update_answer_metrics(metrics, predicted_ans, golden_ans)
-            # joint
-            self.update_joint_metrics(metrics, ans_em, ans_prec, ans_recall, sp_em, sp_prec, sp_recall)                
-            
-        #N = len(self.validation_dataloader)
-        N = num_valid_examples
-        for k in metrics.keys():
-            metrics[k] /= N
-        return metrics
-    def update_sp_metrics(self, metrics, prediction_sent, sent_labels):
-        em, f1, prec, recall = evaluation_metrics(prediction_sent.type(torch.DoubleTensor), 
-                                                  sent_labels.type(torch.DoubleTensor))
-        metrics['sp_em'] += em
-        metrics['sp_f1'] += f1
-        metrics['sp_prec'] += prec
-        metrics['sp_recall'] += recall
-        return em, prec, recall
-        
-    def update_srl_metrics(self, metrics, prediction_srl, srl_labels, positive_probs):
-        srl_eval = evaluation_metrics(prediction_srl.type(torch.DoubleTensor), 
-                                      srl_labels.type(torch.DoubleTensor))
-        metrics['srl_em'] += srl_eval[0]
-        metrics['srl_f1'] += srl_eval[1]
-        metrics['srl_prec'] += srl_eval[2]
-        metrics['srl_recall'] += srl_eval[3]
-        metrics['srl_recall@1'] += recall_at_k(positive_probs, 1, srl_labels)
-        metrics['srl_recall@3'] += recall_at_k(positive_probs, 3, srl_labels)
-        metrics['srl_recall@5'] += recall_at_k(positive_probs, 5, srl_labels)
-        
-    def update_ent_metrics(self, metrics, prediction_ent, ent_labels, positive_probs):
-        ent_eval = evaluation_metrics(prediction_ent.type(torch.DoubleTensor), 
-                                  ent_labels.type(torch.DoubleTensor))
-        metrics['ent_em'] += ent_eval[0]
-        metrics['ent_f1'] += ent_eval[1]
-        metrics['ent_prec'] += ent_eval[2]
-        metrics['ent_recall'] += ent_eval[3]
-        metrics['ent_recall@1'] += recall_at_k(positive_probs, 1, ent_labels)
-        metrics['ent_recall@3'] += recall_at_k(positive_probs, 3, ent_labels)
-        metrics['ent_recall@5'] += recall_at_k(positive_probs, 5, ent_labels)
-    
-    
-    def update_answer_metrics(self, metrics, prediction, gold):
-        em = exact_match_score(prediction, gold)
-        f1, prec, recall = f1_score(prediction, gold)
-        metrics['ans_em'] += float(em)
-        metrics['ans_f1'] += f1
-        metrics['ans_prec'] += prec
-        metrics['ans_recall'] += recall
-        return em, prec, recall
-    
-    def update_joint_metrics(self, metrics, ans_em, ans_prec, ans_recall, sp_em, sp_prec, sp_recall):
-        joint_prec = ans_prec * sp_prec
-        joint_recall = ans_recall * sp_recall
-        if joint_prec + joint_recall > 0:
-            joint_f1 = 2 * joint_prec * joint_recall / (joint_prec + joint_recall)
-        else:
-            joint_f1 = 0.
-        joint_em =ans_em * sp_em
-        metrics['joint_em'] += joint_em
-        metrics['joint_f1'] += joint_f1
-        metrics['joint_prec'] += joint_prec
-        metrics['joint_recall'] += joint_recall
+            predicted_ans = self.__get_pred_ans_str(self.tensor_input_ids[step], output)
+            _id = self.dataset[step]['_id']
+            output_predictions_ans[_id] = predicted_ans
+            #sp
+            prediction_sent = torch.argmax(output['sent']['probs'], dim=1)
+            sent_num = 0
+            dict_sent_num2str = dict()
+            for doc_idx, (doc_title, doc) in enumerate(self.dataset[step]['context']):
+                if dict_ins2dict_doc2pred[step][doc_idx] == 1:
+                    for i, sent in enumerate(doc):
+                        dict_sent_num2str[sent_num] = {'sent': i, 'doc_title': doc_title}
+                        sent_num += 1
+            output_pred_sp[_id] = []
+            for i, pred in enumerate(prediction_sent):
+                if pred == 1:
+                    output_pred_sp[_id].append([dict_sent_num2str[i]['doc_title'],
+                                                dict_sent_num2str[i]['sent']])
+        return {'answer': output_predictions_ans, 'sp': output_pred_sp}
 
-
-
-
-def recall_at_k(prob_pos, k, labels):   
-    k = min(k, len(prob_pos))
-    _, idx_topk = torch.topk(prob_pos, k, dim=0)
-    if sum(labels).item() == 0:
-        if sum(labels[idx_topk]).item() == 0:
-            return 1.0
-        else:
-            return 0.0
-    return sum(labels[idx_topk]).item()/sum(labels).item()
-
-
-# %%
-def accuracy(pred, label):
-    return torch.mean( (pred == label).type(torch.FloatTensor) ).item()
-
-
-# # Evaluation Helpers
-
-# %%
-def confusion(prediction, truth):
-    """ Returns the confusion matrix for the values in the `prediction` and `truth`
-    tensors, i.e. the amount of positions where the values of `prediction`
-    and `truth` are
-    - 1 and 1 (True Positive)
-    - 1 and 0 (False Positive)
-    - 0 and 0 (True Negative)
-    - 0 and 1 (False Negative)
-    """
-
-    confusion_vector = prediction / truth
-    # Element-wise division of the 2 tensors returns a new tensor which holds a
-    # unique value for each case:
-    #   1     where prediction and truth are 1 (True Positive)
-    #   inf   where prediction is 1 and truth is 0 (False Positive)
-    #   nan   where prediction and truth are 0 (True Negative)
-    #   0     where prediction is 0 and truth is 1 (False Negative)
-
-    true_positives = torch.sum(confusion_vector == 1).item()
-    false_positives = torch.sum(confusion_vector == float('inf')).item()
-    true_negatives = torch.sum(torch.isnan(confusion_vector)).item()
-    false_negatives = torch.sum(confusion_vector == 0).item()
-
-    return true_positives, false_positives, true_negatives, false_negatives
-
-def evaluation_metrics(prediction, truth):
-    tp, fp, tn, fn = confusion(prediction, truth)
-    prec = 1.0 * tp / (tp + fp) if tp + fp > 0 else 0.0
-    recall = 1.0 * tp / (tp + fn) if tp + fn > 0 else 0.0
-    f1 = 2 * prec * recall / (prec + recall) if prec + recall > 0 else 0.0
-    em = 1.0 if fp + fn == 0 else 0.0
-    return em, f1, prec, recall
-    
-def test_with_valid_tensors():
-    prediction = torch.tensor([
-        [1],
-        [1.0],
-        [1],
-        [0],
-        [0],
-        [0],
-        [0],
-        [0],
-        [0],
-        [0]
-    ])
-    truth = torch.tensor([
-        [1.0],
-        [1],
-        [0],
-        [0],
-        [1],
-        [0],
-        [0],
-        [1],
-        [1],
-        [1]
-    ])
-
-    tp, fp, tn, fn = confusion(prediction, truth)
-    
-    assert tp == 2
-    assert fp == 1
-    assert tn == 3
-    assert fn == 4
-    assert evaluation_metrics(truth.view(-1), truth.view(-1)) == (1.0, 1.0, 1.0, 1.0)
-
-
-# %%
-import sys
-import re
-import string
-from collections import Counter
-import pickle
-
-def normalize_answer(s):
-
-    def remove_articles(text):
-        return re.sub(r'\b(a|an|the)\b', ' ', text)
-
-    def white_space_fix(text):
-        return ' '.join(text.split())
-
-    def remove_punc(text):
-        exclude = set(string.punctuation)
-        return ''.join(ch for ch in text if ch not in exclude)
-
-    def lower(text):
-        return text.lower()
-
-    return white_space_fix(remove_articles(remove_punc(lower(s))))
-
-
-def f1_score(prediction, ground_truth):
-    normalized_prediction = normalize_answer(prediction)
-    normalized_ground_truth = normalize_answer(ground_truth)
-
-    ZERO_METRIC = (0, 0, 0)
-
-    if normalized_prediction in ['yes', 'no', 'noanswer'] and normalized_prediction != normalized_ground_truth:
-        return ZERO_METRIC
-    if normalized_ground_truth in ['yes', 'no', 'noanswer'] and normalized_prediction != normalized_ground_truth:
-        return ZERO_METRIC
-
-    prediction_tokens = normalized_prediction.split()
-    ground_truth_tokens = normalized_ground_truth.split()
-    common = Counter(prediction_tokens) & Counter(ground_truth_tokens)
-    num_same = sum(common.values())
-    if num_same == 0:
-        return ZERO_METRIC
-    precision = 1.0 * num_same / len(prediction_tokens)
-    recall = 1.0 * num_same / len(ground_truth_tokens)
-    f1 = (2 * precision * recall) / (precision + recall)
-    return f1, precision, recall
-
-
-def exact_match_score(prediction, ground_truth):
-    return (normalize_answer(prediction) == normalize_answer(ground_truth))
+    def __get_pred_ans_str(self, input_ids, output):
+        st = torch.argmax(output['span']['start_logits'], dim=1).item()
+        end = torch.argmax(output['span']['end_logits'], dim=1).item()
+        return self.tokenizer.decode(input_ids[st:end])

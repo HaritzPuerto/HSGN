@@ -1,20 +1,11 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[1]:
-
-
-import json
 from tqdm import tqdm
 import torch
 from transformers import BertTokenizer
-from transformers import BertForSequenceClassification, AdamW, BertConfig
+from transformers import BertForSequenceClassification
 from torch.utils.data import TensorDataset, DataLoader, SequentialSampler
-import os
-import numpy as np
-
-
-# In[2]:
 
 
 class DocumentRetrieval():
@@ -25,13 +16,13 @@ class DocumentRetrieval():
         if device == 'cuda':
             self.model.cuda()
 
-    def predict_relevant_docs(self, model, data, batch_size = 16):
+    def predict_relevant_docs(self, data, batch_size=16):
         dataloader = self.__create_dataloader(data, batch_size)
         preds = self.__run_model(dataloader)
         dict_ins2dict_doc2pred = self.__convert_preds2dict(data, preds)
         return dict_ins2dict_doc2pred
 
-    def __create_dataloader(self, dev_data, batch_size = 16):
+    def __create_dataloader(self, dev_data, batch_size=16):
         testing_classification_data = []
         for ins in dev_data:
             tmp = {
@@ -47,7 +38,6 @@ class DocumentRetrieval():
 
         test_input_ids = []
         test_attention_masks = []
-        test_labels = []
         sample_id = []
 
         for idx, sam in enumerate(tqdm(testing_classification_data)):
@@ -57,7 +47,7 @@ class DocumentRetrieval():
                         add_special_tokens=True,
                         max_length=128,
                         pad_to_max_length=True,
-                        #truncation=True,
+                        truncation=True,
                         return_attention_mask=True,
                         return_tensors='pt'
                 )
@@ -73,23 +63,30 @@ class DocumentRetrieval():
         prediction_sampler = SequentialSampler(prediction_data)
         prediction_dataloader = DataLoader(prediction_data, sampler=prediction_sampler, batch_size=batch_size)
         return prediction_dataloader
-    
-    def __convert_preds2dict(self, hotpot, preds):
+
+    def __convert_preds2dict(self, hotpot, softmax_predictions):
         doc_num = 0
         dict_ins2dict_doc2pred = dict()
         for ins_idx, ins in enumerate(tqdm(hotpot)):
             dict_doc2pred = dict()
+            num_docs = len(ins['context'])
+            probs_posit = softmax_predictions[doc_num:doc_num + num_docs][:, 1]
+            _, preds = list(probs_posit.topk(2, dim=0))
+            preds = preds.numpy()
+            num_docs += doc_num
             for d_idx, doc in enumerate(ins['context']):
-                dict_doc2pred[d_idx] = preds[doc_num]
-                doc_num += 1
+                if d_idx in preds:
+                    dict_doc2pred[d_idx] = 1
+                else:
+                    dict_doc2pred[d_idx] = 0
             dict_ins2dict_doc2pred[ins_idx] = dict_doc2pred
         return dict_ins2dict_doc2pred
-    
+
     def __run_model(self, dataloader):
         # Put model in evaluation mode
         self.model.eval()
         # Tracking variables 
-        predictions , true_labels = [], []
+        predictions = []
         # Predict 
         for batch in tqdm(dataloader):
             batch = tuple(t.to(self.device) for t in batch)
@@ -97,48 +94,11 @@ class DocumentRetrieval():
             with torch.no_grad():
               # Forward pass, calculate logit predictions
                 outputs = self.model(b_input_ids, token_type_ids=None, 
-                                  attention_mask=b_input_mask)
+                                     attention_mask=b_input_mask)
             logits = outputs[0]
           # Move logits and labels to CPU
             logits = logits.detach().cpu().numpy()
           # Store predictions and true labels
             predictions.extend(logits)
         softmax_predictions = torch.nn.functional.softmax(torch.tensor(predictions), dim=1)
-        preds = torch.argmax(softmax_predictions, dim=1).numpy()
-        return preds
-
-
-# In[3]:
-
-
-device = 'cuda'
-model_path = '/workspace/ml-workspace/thesis_git/HSGN/models/doc_retrieval'
-data_path = "/workspace/ml-workspace/thesis_git/HSGN/data/"
-hotpot_qa_path = os.path.join(data_path, "external")
-with open(os.path.join(hotpot_qa_path, "hotpot_dev_distractor_v1.json"), "r") as f:
-    dev_data = json.load(f)
-
-
-# In[4]:
-
-
-model = DocumentRetrieval(device, model_path)
-
-
-# In[5]:
-
-
-data = dev_data[0:10]
-
-
-# In[6]:
-
-
-model.predict_relevant_docs(model, data)
-
-
-# In[ ]:
-
-
-
-
+        return softmax_predictions

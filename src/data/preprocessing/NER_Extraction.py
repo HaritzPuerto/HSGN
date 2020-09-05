@@ -26,14 +26,15 @@ class NER_stanza():
             list_hotpot_ner.append(list_ent)
         return list_hotpot_ner
 
-    def extract_named_entities(self, hotpot):
+    def extract_named_entities(self, hotpot, dict_ins2dict_doc2pred):
         list_hotpot_ner = []
         for instance_idx, hotpot_instance in enumerate(tqdm(hotpot)):
             list_doc_ner = []
             for doc_idx, (doc_title, doc) in enumerate(hotpot_instance['context']):
                 list_sent_ner = []
-                for sent_idx, sentence in enumerate(doc):
-                    list_sent_ner.append(self.get_ner(sentence))
+                if dict_ins2dict_doc2pred[instance_idx][doc_idx] == 1:
+                    for sent_idx, sentence in enumerate(doc):
+                        list_sent_ner.append(self.get_ner(sentence))
                 list_doc_ner.append(list_sent_ner)
             list_hotpot_ner.append(list_doc_ner)
         return list_hotpot_ner
