@@ -13,9 +13,8 @@ print("Preprocessing data")
 hotpotqa_path = 'external/'
 print("Loading HotpotQA")
 #hotpot_dev_distractor_v1
-with open(os.path.join(data_path, hotpotqa_path, "hotpot_dev_distractor_v1.json"), "r") as f:
+with open(os.path.join(data_path, hotpotqa_path, "input.json"), "r") as f:
     hotpot = json.load(f)
-hotpot = hotpot[0:10]
 device = 'cuda'
 pretrained_weights = 'bert-large-cased-whole-word-masking'
 doc_retr_model_path = 'models/doc_retrieval'
@@ -48,4 +47,3 @@ preds = validation.get_answer_predictions(dict_ins2dict_doc2pred)
 with open('./predictions.json', 'w+') as f:
     json.dump(preds, f)
 print("Finished :)")
-#1244/7405
