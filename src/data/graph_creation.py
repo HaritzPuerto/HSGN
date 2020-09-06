@@ -92,20 +92,18 @@ class Dataset():
         list_context, list_dict_idx = self.encode_all_sentences()
         list_graphs = []
         list_span_idx = []
-        list_g_metadata = []
-        list_list_srl_edges_metadata = []
-        list_list_ent2ent_metadata = []
         for ins_idx, hotpot_instance in enumerate(tqdm(self.dataset)):
             list_entities = self.list_hotpot_ner[ins_idx]
             dict_idx = list_dict_idx[ins_idx]
-            g, g_metadata, list_srl_edges_metadata, list_ent2ent_metadata, span_idx = self.create_graph(hotpot_instance, list_entities, dict_idx, list_context[ins_idx]['input_ids'], ins_idx)
+            g, list_srl_edges_metadata, list_ent2ent_metadata, span_idx = self.create_graph(hotpot_instance, list_entities, dict_idx, list_context[ins_idx]['input_ids'], ins_idx)
             self.build_tests(ins_idx, g, span_idx, hotpot_instance['answer'])
             list_graphs.append(g)
             list_span_idx.append(span_idx)
-            list_g_metadata.append(g_metadata)
-            list_list_srl_edges_metadata.append(list_srl_edges_metadata)
-            list_list_ent2ent_metadata.append(list_ent2ent_metadata)
-        return list_graphs, list_g_metadata, list_context, list_list_srl_edges_metadata, list_list_ent2ent_metadata, list_span_idx
+            if 'ent2ent_rel' in g.etypes:
+                g.edges['ent2ent_rel'].data['rel_type'] = torch.tensor([edge['rel_type'] for edge in list_ent2ent_metadata])
+                g.edges['ent2ent_rel'].data['span_idx'] = torch.tensor([edge['span_idx'] for edge in list_ent2ent_metadata])
+
+        return list_graphs, list_context, list_span_idx
 
     def build_tests(self, ins_idx, g, span_idx, ans):
         #print(ins_idx, span_idx)
@@ -510,10 +508,16 @@ class Dataset():
 #                     list_srl2srl.extend([(arg1, arg2) for arg1 in list_arg_nodes
 #                                                       for arg2 in list_arg_nodes])
                     # SRL_TMP -> SRL # lbl: [SRL_TMP2SRL]
-                    if current_srl_tmp_node is not None:
+                    if current_srl_tmp_node is not None and len(list_arg_nodes) == 0:
+                        srl_tmp_node_idx -= 1
+                        list_srl_tmp_st_end_idx.pop()
+                    if current_srl_tmp_node is not None and len(list_arg_nodes) != 0:
                         list_srl_tmp2srl.extend([(current_srl_tmp_node, arg1) for arg1 in list_arg_nodes])
                     # SRL_LOC -> SRL # lbl: [SRL_LOC2SRL]
-                    if current_srl_loc_node is not None:
+                    if current_srl_loc_node is not None and len(list_arg_nodes) == 0:
+                        srl_loc_node_idx -= 1
+                        list_srl_loc_st_end_idx.pop()
+                    if current_srl_loc_node is not None and len(list_arg_nodes) != 0:
                         list_srl_loc2srl.extend([(current_srl_loc_node, arg1) for arg1 in list_arg_nodes])
                     # srl_arg -> sent  # lbl: [SRL2SENT]
                     list_srl2sent.extend([(arg, current_sent_node) for arg in list_arg_nodes])        
@@ -672,13 +676,19 @@ class Dataset():
                                             })
                         list_srl2srl.append((arg1, arg2))
             # SRL_TMP -> SRL # lbl: [SRL_TMP2SRL]
-            if current_srl_tmp_node is not None:
+            if current_srl_tmp_node is not None and len(list_arg_nodes) == 0:
+                current_srl_tmp_node -= 1
+                list_srl_tmp_st_end_idx.pop()
+            if current_srl_tmp_node is not None and len(list_arg_nodes) != 0:
                 list_srl_tmp2srl.extend([(current_srl_tmp_node, arg1) for arg1 in list_arg_nodes])
             # SRL_LOC -> SRL # lbl: [SRL_LOC2SRL]
-            if current_srl_loc_node is not None:
+            if current_srl_loc_node is not None and len(list_arg_nodes) == 0:
+                srl_loc_node_idx -= 1
+                list_srl_loc_st_end_idx.pop()
+            if current_srl_loc_node is not None and len(list_arg_nodes) != 0:
                 list_srl_loc2srl.extend([(current_srl_loc_node, arg1) for arg1 in list_arg_nodes])
             # srl_arg -> query  # lbl: [SRL2QUERY]
-            list_srl2query.extend([(arg, 0) for arg in list_arg_nodes])        
+            list_srl2query.extend([(arg, 0) for arg in list_arg_nodes])
             # query -> arg_srl  # lbl: [QUERY2SRL]
             list_query2srl.extend([(0, arg) for arg in list_arg_nodes])
         # metadata sent
@@ -703,35 +713,13 @@ class Dataset():
                                                                              list_srl2ent, 
                                                                              list_srl_rel)
         dict_edges = {
-#             ('doc', 'doc2sent', 'sent'): list_doc2sent,  # lbl: [DOC2SENT]
                      ('sent', 'sent2doc', 'doc'): list_sent2doc,  # lbl: [SENT2DOC]
-#                      ('sent', 'sent2srl', 'srl'): list_sent2srl,  # lbl: [SENT2SRL]
-                     
-#                      ('srl', 'srl2ent', 'ent'): list_srl2ent,     # lbl: [SRL2ENT]
-                     # to token
-#                      ('doc', 'doc2tok', 'tok'): list_doc2tok,     # lbl: [DOC2TOK]
-#                      ('tok', 'tok2doc', 'doc'): list_tok2doc,     # lbl: [TOK2DOC]
-#                      ('sent', 'sent2tok', 'tok'): list_sent2tok,  # lbl: [SENT2TOK]
-#                      ('tok', 'tok2sent', 'sent'): list_tok2sent,  # lbl: [TOK2SENT]
-                     
-#                      ('tok', 'tok2srl', 'srl'): list_tok2srl,     # lbl: [TOK2SRL]
-#                      ('tok', 'tok2ent', 'ent'): list_tok2ent,     # lbl: [TOK2ENT]
-                     # end hierarchical
-                     # same-level edges
                      ('doc', 'doc2doc_self', 'doc'): list_doc2doc,         # lbl: [DOC2DOC_SELF]
-                     ('sent', 'sent2sent', 'sent'): list_sent2sent,   # lbl: [SENT2SENT]
-                     
-                     
+                     ('sent', 'sent2sent', 'sent'): list_sent2sent,   # lbl: [SENT2SENT]                     
                      ('tok', 'token2token_self', 'tok'): list_token2token, # lbl: [TOK2TOK_SELF]
                      # multi-hop edges
-                     
                      ('sent', 'sent_multihop', 'sent'): list_sent_multihop,
-                     # Answer type
-                    #  ('sent', 'sent2AT', 'AT'): list_sent2at, # lbl: [SENT2AT]
-#                      ('srl', 'srl2AT', 'AT'): list_srl2at, # lbl: [SRL2AT]
-#                      ('query', 'query2AT', 'AT'): [(0,0)], # lbl: [QUERY2AT]
                     }
-
         if list_srl2sent != []:
             dict_edges[('srl', 'srl2sent', 'sent')] = list_srl2sent # lbl: [SRL2SENT]
         if list_srl2tok != []:
@@ -752,8 +740,6 @@ class Dataset():
             dict_edges[('ent', 'ent2ent_rel', 'ent')] = list_ent2ent_rel  # lbl: [ENT2ENT_REL]
         if list_ent_multihop != []:
             dict_edges[('ent', 'ent_multihop', 'ent')] = list_ent_multihop # lbl: [ENT2ENT_MH]
-#         if list_ent2at != []:
-#             dict_edges[('ent', 'ent2AT', 'AT')] = list_ent2at # lbl: [ENT2AT]
         if list_srl_loc2srl != []:
             dict_edges[('srl_loc', 'srl_loc2srl', 'srl')] = list_srl_loc2srl  # lbl: [SRL_LOC2SRL]
         if list_srl_tmp2srl != []:
@@ -764,74 +750,32 @@ class Dataset():
             dict_edges[('query', 'query2sent_multihop', 'sent')] = list_query2sent_multihop
         if list_srl2query != []:
             dict_edges[('srl', 'srl2query', 'query')] = list_srl2query
-        # if list_query2srl != []:
-        #     dict_edges[('query', 'query2srl', 'srl')] = list_query2srl
-        
         
         graph = dgl.heterograph(dict_edges)
-        graph_metadata = dict()
         # doc metadata
-        graph_metadata['doc'] = dict()
-        graph_metadata['doc']['st_end_idx'] =  np.array(list_doc_st_end_idx)
-#         graph_metadata['doc']['list_context_idx'] = np.array(list_doc_context_idx).reshape(-1,1)
+        graph.nodes['doc'].data['st_end_idx'] =  np.array(list_doc_st_end_idx)
         # sent metadata
-        graph_metadata['sent'] = dict()
-        graph_metadata['sent']['st_end_idx'] =  np.array(list_sent_st_end_idx)
-#         graph_metadata['sent']['list_context_idx'] = np.array(list_sent_context_idx).reshape(-1,1)
+        if 'sent' in graph.ntypes:
+            graph.nodes['sent'].data['st_end_idx'] =  np.array(list_sent_st_end_idx)
         # srl metadata
-        if list_srl_st_end_idx != []:
-            graph_metadata['srl'] = dict()
-            graph_metadata['srl']['st_end_idx'] =  np.array(list_srl_st_end_idx)
-#         graph_metadata['srl']['list_context_idx'] = np.array(list_srl_context_idx).reshape(-1,1)
-        # srl_loc metadata
-        if list_srl_loc2srl != []:
-            graph_metadata['srl_loc'] = dict()
-            graph_metadata['srl_loc']['st_end_idx'] =  np.array(list_srl_loc_st_end_idx)
-#             graph_metadata['srl_loc']['list_context_idx'] = np.array(list_srl_loc_context_idx).reshape(-1,1)
-        # srl_tmp metadata
-        if list_srl_tmp2srl != []:
-            graph_metadata['srl_tmp'] = dict()
-            graph_metadata['srl_tmp']['st_end_idx'] =  np.array(list_srl_tmp_st_end_idx)
-#             graph_metadata['srl_tmp']['list_context_idx'] = np.array(list_srl_tmp_context_idx).reshape(-1,1) 
+        if 'srl' in graph.ntypes:
+            graph.nodes['srl'].data['st_end_idx'] =  np.array(list_srl_st_end_idx)
+        # srl tmp metadata
+        if 'srl_tmp' in graph.ntypes:
+            graph.nodes['srl_tmp'].data['st_end_idx'] =  np.array(list_srl_tmp_st_end_idx)
+        # srl loc metadata
+        if 'srl_loc' in graph.ntypes:
+            graph.nodes['srl_loc'].data['st_end_idx'] =  np.array(list_srl_loc_st_end_idx)
         # ent metadata
-        if list_ent_st_end_idx != []:
-            graph_metadata['ent'] = dict()
-            graph_metadata['ent']['st_end_idx'] =  np.array(list_ent_st_end_idx)
-    #         graph_metadata['ent']['list_context_idx'] = np.array(list_ent_context_idx).reshape(-1,1)
+        if 'ent' in graph.ntypes:
+            graph.nodes['ent'].data['st_end_idx'] =  np.array(list_ent_st_end_idx)
         # token metadata
-        graph_metadata['tok'] = dict()
-        graph_metadata['tok']['st_end_idx'] =  np.array(list_token_st_end_idx)
-#         graph_metadata['tok']['list_context_idx'] = np.array(list_token_context_idx).reshape(-1,1)
+        graph.nodes['tok'].data['st_end_idx'] =  np.array(list_token_st_end_idx)
         # query metadata
-        graph_metadata['query'] = dict()
-        graph_metadata['query']['st_end_idx'] =  np.array(list_query_st_end_idx)
-        # Answer Type metadata
-#         graph_metadata['AT'] = dict()
-#         graph_metadata['AT']['labels'] = np.array([at_label]).reshape(-1,1)
-#         graph_metadata['AT']['st_end_idx'] =  np.array([[0, self.max_len]])
-
-#         # doc metadata
-#         graph.nodes['doc'].data['st_end_idx'] =  np.array(list_doc_st_end_idx)
-#         graph.nodes['doc'].data['list_context_idx'] = np.array(list_doc_context_idx).reshape(-1,1)
-#         graph.nodes['doc'].data['labels'] = np.array(list_doc_lbl).reshape(-1,1)
-#         # sent metadata
-#         graph.nodes['sent'].data['st_end_idx'] =  np.array(list_sent_st_end_idx)
-#         graph.nodes['sent'].data['list_context_idx'] = np.array(list_sent_context_idx).reshape(-1,1)
-#         graph.nodes['sent'].data['labels'] = np.array(list_sent_lbl).reshape(-1,1)
-#         # srl metadata
-#         graph.nodes['srl'].data['st_end_idx'] =  np.array(list_srl_st_end_idx)
-#         graph.nodes['srl'].data['list_context_idx'] = np.array(list_srl_context_idx).reshape(-1,1)
-#         graph.nodes['srl'].data['labels'] = np.array(list_srl_lbl).reshape(-1,1)
-#         # ent metadata
-#         graph.nodes['ent'].data['st_end_idx'] =  np.array(list_ent_st_end_idx)
-#         graph.nodes['ent'].data['list_context_idx'] = np.array(list_ent_context_idx).reshape(-1,1)
-#         graph.nodes['ent'].data['labels'] = np.array(list_ent_lbl).reshape(-1,1)
-#         # token metadata
-#         graph.nodes['tok'].data['st_end_idx'] =  np.array(list_token_st_end_idx)
-#         graph.nodes['tok'].data['list_context_idx'] = np.array(list_token_context_idx).reshape(-1,1)
-#         graph.nodes['tok'].data['labels'] = np.array(list_token_lbl).reshape(-1,1)
+        if 'query' in graph.ntypes:
+            graph.nodes['query'].data['st_end_idx'] = np.array(list_query_st_end_idx)
         
-        return graph, graph_metadata, list_srl_rel, list_ent2ent_metadata, (ans_st_idx, ans_end_idx)
+        return graph, list_srl_rel, list_ent2ent_metadata, (ans_st_idx, ans_end_idx)
 
     def compute_ent_relations(self, list_srl2srl, list_srl2ent, list_srl_rel_metadata):
         # aux data structure
