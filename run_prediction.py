@@ -6,18 +6,18 @@ import json
 import os
 
 
-data_path = '/workspace/ml-workspace/thesis_git/HSGN/data/'
-model_path = '/workspace/ml-workspace/thesis_git/HSGN/models'
+data_path = 'data/'
+model_path = 'models'
 
 print("Preprocessing data")
 hotpotqa_path = 'external/'
 print("Loading HotpotQA")
 #hotpot_dev_distractor_v1
-with open(os.path.join(data_path, hotpotqa_path, "hotpot_dev_distractor_v1.json"), "r") as f:
+with open(os.path.join(data_path, hotpotqa_path, "input.json"), "r") as f:
     hotpot = json.load(f)
 device = 'cuda'
 pretrained_weights = 'bert-large-cased-whole-word-masking'
-doc_retr_model_path = '/workspace/ml-workspace/thesis_git/HSGN/models/doc_retrieval'
+doc_retr_model_path = 'models/doc_retrieval'
 print("Loading the document retrieval model")
 doc_retr = DocumentRetrieval(device, doc_retr_model_path)
 print("Computing the relevant documents")
