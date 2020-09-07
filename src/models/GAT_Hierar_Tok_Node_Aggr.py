@@ -494,7 +494,7 @@ if 'large' in pretrained_weights:
 dict_params = {'in_feats': bert_dim, 'out_feats': bert_dim, 'feat_drop': 0.1, 'attn_drop': 0.1, 'residual': True, 'hidden_size_classifier': 768,
                'weight_sent_loss': 1, 'weight_srl_loss': 1, 'weight_ent_loss': 1,
                'weight_span_loss': 2, 'weight_ans_type_loss': 1, 
-               'gat_layers': 2, 'etypes': graph.etypes, 'accumulation_steps': 5}
+               'gat_layers': 2, 'etypes': graph.etypes, 'accumulation_steps': 2}
 class HGNModel(BertPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
@@ -1381,8 +1381,8 @@ with neptune.create_experiment(name="40K gradient accum yes_no span BiGRU initia
 #                 neptune.log_metric("ans_type_loss", ans_type_loss.detach().item())
 
             # backpropagation
-            total_loss.backward()
             total_loss = total_loss/dict_params['accumulation_steps']
+            total_loss.backward()
 #             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
 #             optimizer.step()
 #             scheduler.step()
