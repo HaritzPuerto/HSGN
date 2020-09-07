@@ -6,6 +6,7 @@ import torch
 from transformers import BertTokenizer
 from transformers import BertForSequenceClassification
 from torch.utils.data import TensorDataset, DataLoader, SequentialSampler
+import numpy as np
 
 
 class DocumentRetrieval():
@@ -16,10 +17,10 @@ class DocumentRetrieval():
         if device == 'cuda':
             self.model.cuda()
 
-    def predict_relevant_docs(self, data, batch_size=16):
+    def predict_relevant_docs(self, data, batch_size=16, k=2):
         dataloader = self.__create_dataloader(data, batch_size)
         preds = self.__run_model(dataloader)
-        dict_ins2dict_doc2pred = self.__convert_preds2dict(data, preds)
+        dict_ins2dict_doc2pred = self.output_logits2pred(data, k, preds)
         return dict_ins2dict_doc2pred
 
     def __create_dataloader(self, dev_data, batch_size=16):
@@ -64,23 +65,46 @@ class DocumentRetrieval():
         prediction_dataloader = DataLoader(prediction_data, sampler=prediction_sampler, batch_size=batch_size)
         return prediction_dataloader
 
-    def __convert_preds2dict(self, hotpot, softmax_predictions):
-        doc_num = 0
+    def output_logits2pred(self, hotpot, k, preds):
         dict_ins2dict_doc2pred = dict()
-        for ins_idx, ins in enumerate(tqdm(hotpot)):
+        idx = 0
+        for ins_idx, ins in enumerate(hotpot):
+            doc2prob = []
+            for doc_idx, (title, _) in enumerate(ins['context']):
+                doc2prob.append(preds[idx][1])
+                idx += 1
+            # top k most relevant docs
+            list_preds = np.array(doc2prob).argsort()[-k:][::-1]
+            # create pred dict for this instace
             dict_doc2pred = dict()
-            num_docs = len(ins['context'])
-            probs_posit = softmax_predictions[doc_num:doc_num + num_docs][:, 1]
-            _, preds = list(probs_posit.topk(2, dim=0))
-            preds = preds.numpy()
-            num_docs += doc_num
-            for d_idx, doc in enumerate(ins['context']):
-                if d_idx in preds:
-                    dict_doc2pred[d_idx] = 1
+            for doc_idx, (title, _) in enumerate(ins['context']):
+                if doc_idx in list_preds:
+                    dict_doc2pred[doc_idx] = 1
                 else:
-                    dict_doc2pred[d_idx] = 0
+                    dict_doc2pred[doc_idx] = 0
             dict_ins2dict_doc2pred[ins_idx] = dict_doc2pred
         return dict_ins2dict_doc2pred
+
+    def recall(self, hotpot, pred):
+        labels = []
+        for ins in hotpot:
+            label_ins = []
+            set_titles = set([title for title, _ in ins['supporting_facts']])
+            for i, (title, _) in enumerate(ins['context']):
+                if title in set_titles:
+                    label_ins.append(1)
+                else:
+                    label_ins.append(0)
+            labels.append(label_ins)
+        recall = []
+        for i in range(len(hotpot)):
+            list_idx = np.array(labels[i]).argsort()[-2:][::-1]
+            correct = 0
+            for idx in list_idx:
+                if pred[i][idx] == 1:
+                    correct += 1
+            recall.append(correct / 2.0)
+        return np.mean(recall)
 
     def __run_model(self, dataloader):
         # Put model in evaluation mode

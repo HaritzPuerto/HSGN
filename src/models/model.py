@@ -708,6 +708,8 @@ class Validation():
         output_predictions_ans = {}
         for step, b_graph in enumerate(tqdm(self.validation_dataloader)): 
             with torch.no_grad():
+                if b_graph.number_of_nodes('sent') == 0:
+                    continue
                 output = self.model(b_graph,
                                input_ids=self.tensor_input_ids[step].unsqueeze(0).to(device),
                                attention_mask=self.tensor_attention_masks[step].unsqueeze(0).to(device),
