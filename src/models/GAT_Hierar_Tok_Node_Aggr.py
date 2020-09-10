@@ -56,8 +56,8 @@ pretrained_weights = 'bert-base-cased'
 # ## Processing
 
 # %%
-training_path = os.path.join(data_path, "processed/training/heterog_20200902_yes_no_span/")
-dev_path = os.path.join(data_path, "processed/dev/heterog_20200902_yes_no_span/")
+training_path = os.path.join(data_path, "processed/training/heterog_20200910_query_edges/")
+dev_path = os.path.join(data_path, "processed/dev/heterog_20200910_query_edges/")
 
 with open(os.path.join(training_path, 'list_span_idx.p'), 'rb') as f:
     list_span_idx = pickle.load(f)
@@ -960,7 +960,7 @@ scheduler = get_linear_schedule_with_warmup(optimizer,
 # %%
 
 
-neptune_token = "eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vdWkubmVwdHVuZS5haSIsImFwaV91cmwiOiJodHRwczovL3VpLm5lcHR1bmUuYWkiLCJhcGlfa2V5IjoiYTA2MTgwYjQtMGJkMS00MTcxLTk0MWEtZjIxZThmYjlhYTA5In0="
+neptune_token = "eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vdWkubmVwdHVuZS5haSIsImFwaV91cmwiOiJodHRwczovL3VpLm5lcHR1bmUuYWkiLCJhcGlfa2V5IjoiM2ExZDRjYzctODIwOC00YjdjLTkzYmYtN2I3OTgzMTYxNzFlIn0="
 
 
 # %%
@@ -1321,7 +1321,7 @@ model_path = '/workspace/ml-workspace/thesis_git/HSGN/models'
 best_eval_f1 = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="40K yes_no span BiGRU initial emb Bottom-up ent rel & Hierar. Tok. Aggr.  span_lossx2", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
+with neptune.create_experiment(name="40K query edges inverse htok layer gru", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
     neptune.append_tag(["yes_no span", "bigru initial emb", "bottom-up", "ent relation", "no SRL rel", "Query node", "multihop edges", "residual", "w_yn"])
     neptune.set_property('server', 'IRGPU2')
     neptune.set_property('training_set_path', training_path)
