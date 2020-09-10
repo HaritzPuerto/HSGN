@@ -379,16 +379,18 @@ class HeteroRGCNLayer(nn.Module):
     def forward(self, G, feat_dict, bert_token_emb):
         # The input is a dictionary of node features for each type
         funcs = {}
-#         G.nodes['AT'].data['h'] = self.feat_drop(feat_dict['AT']) # AT is never a src
-#         if self.residual:
-#             G.nodes['AT'].data['resid'] = feat_dict['AT']
                 
         for srctype, etype, dsttype in G.canonical_etypes:
-            G.nodes[srctype].data['h'] = self.feat_drop(feat_dict[srctype])
-            
-            if self.residual:
+            if 'h' not in G.nodes[srctype].data:
+                G.nodes[srctype].data['h'] = self.feat_drop(feat_dict[srctype])
+            if 'h' not in G.nodes[dsttype].data:
+                G.nodes[dsttype].data['h'] = self.feat_drop(feat_dict[dsttype])
+            if self.residual and 'resid' not in G.nodes[srctype].data:
                 G.nodes[srctype].data['resid'] = feat_dict[srctype]
-            if "2tok" in etype:     
+            if self.residual and 'resid' not in G.nodes[dsttype].data:
+                G.nodes[dsttype].data['resid'] = feat_dict[dsttype]
+            
+            if "2tok" in etype:
                 pass
             elif "srl2srl" == etype:
                 pass
