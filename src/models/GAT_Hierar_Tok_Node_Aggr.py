@@ -473,9 +473,12 @@ class HeteroRGCN(nn.Module):
         h_dict = self.layer2(G, h_dict, bert_token_emb)
         h_tok2 = h_dict['tok'].view(1,-1,self.in_size)
         
-        #tok1, tok2 form a sequence and the initial hidden emb is tok0
-        gru_input = torch.cat((h_tok1, h_tok2), dim=0)
-        tok_emb = self.gru_layer_lvl(gru_input, h_tok0)[0][-1].view(-1, self.in_size)
+        # tok2, tok1, tok0 is the sequence input into the gru
+        # intuition: add the new knowledge from the graph in the original token emb
+        # origianl tok emb do not contain graph info, so they can be more suitable for span pred
+        # gru can remove the graph info we don't need for span pred
+        gru_input = torch.cat((h_tok1, h_tok0), dim=0)
+        tok_emb = self.gru_layer_lvl(gru_input, h_tok2)[0][-1].view(-1, self.in_size)
         h_dict['tok'] = tok_emb
         return h_dict
     
