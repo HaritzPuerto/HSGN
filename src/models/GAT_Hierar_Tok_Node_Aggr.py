@@ -56,8 +56,8 @@ pretrained_weights = 'bert-base-cased'
 # ## Processing
 
 # %%
-training_path = os.path.join(data_path, "processed/training/heterog_20200902_yes_no_span/")
-dev_path = os.path.join(data_path, "processed/dev/heterog_20200902_yes_no_span/")
+training_path = os.path.join(data_path, "processed/training/heterog_20200910_query_edges/")
+dev_path = os.path.join(data_path, "processed/dev/heterog_20200910_query_edges/")
 
 with open(os.path.join(training_path, 'list_span_idx.p'), 'rb') as f:
     list_span_idx = pickle.load(f)
@@ -379,16 +379,18 @@ class HeteroRGCNLayer(nn.Module):
     def forward(self, G, feat_dict, bert_token_emb):
         # The input is a dictionary of node features for each type
         funcs = {}
-#         G.nodes['AT'].data['h'] = self.feat_drop(feat_dict['AT']) # AT is never a src
-#         if self.residual:
-#             G.nodes['AT'].data['resid'] = feat_dict['AT']
                 
         for srctype, etype, dsttype in G.canonical_etypes:
-            G.nodes[srctype].data['h'] = self.feat_drop(feat_dict[srctype])
-            
-            if self.residual:
+            if 'h' not in G.nodes[srctype].data:
+                G.nodes[srctype].data['h'] = self.feat_drop(feat_dict[srctype])
+            if 'h' not in G.nodes[dsttype].data:
+                G.nodes[dsttype].data['h'] = self.feat_drop(feat_dict[dsttype])
+            if self.residual and 'resid' not in G.nodes[srctype].data:
                 G.nodes[srctype].data['resid'] = feat_dict[srctype]
-            if "2tok" in etype:     
+            if self.residual and 'resid' not in G.nodes[dsttype].data:
+                G.nodes[dsttype].data['resid'] = feat_dict[dsttype]
+            
+            if "2tok" in etype:
                 pass
             elif "srl2srl" == etype:
                 pass
@@ -473,9 +475,12 @@ class HeteroRGCN(nn.Module):
         h_dict = self.layer2(G, h_dict, bert_token_emb)
         h_tok2 = h_dict['tok'].view(1,-1,self.in_size)
         
-        #tok1, tok2 form a sequence and the initial hidden emb is tok0
-        gru_input = torch.cat((h_tok1, h_tok2), dim=0)
-        tok_emb = self.gru_layer_lvl(gru_input, h_tok0)[0][-1].view(-1, self.in_size)
+        # tok2, tok1, tok0 is the sequence input into the gru
+        # intuition: add the new knowledge from the graph in the original token emb
+        # origianl tok emb do not contain graph info, so they can be more suitable for span pred
+        # gru can remove the graph info we don't need for span pred
+        gru_input = torch.cat((h_tok1, h_tok0), dim=0)
+        tok_emb = self.gru_layer_lvl(gru_input, h_tok2)[0][-1].view(-1, self.in_size)
         h_dict['tok'] = tok_emb
         return h_dict
     
@@ -957,7 +962,7 @@ scheduler = get_linear_schedule_with_warmup(optimizer,
 # %%
 
 
-neptune_token = "eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vdWkubmVwdHVuZS5haSIsImFwaV91cmwiOiJodHRwczovL3VpLm5lcHR1bmUuYWkiLCJhcGlfa2V5IjoiYTA2MTgwYjQtMGJkMS00MTcxLTk0MWEtZjIxZThmYjlhYTA5In0="
+neptune_token = "eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vdWkubmVwdHVuZS5haSIsImFwaV91cmwiOiJodHRwczovL3VpLm5lcHR1bmUuYWkiLCJhcGlfa2V5IjoiM2ExZDRjYzctODIwOC00YjdjLTkzYmYtN2I3OTgzMTYxNzFlIn0="
 
 
 # %%
@@ -1318,7 +1323,7 @@ model_path = '/workspace/ml-workspace/thesis_git/HSGN/models'
 best_eval_f1 = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="40K yes_no span BiGRU initial emb Bottom-up ent rel & Hierar. Tok. Aggr.  span_lossx2", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
+with neptune.create_experiment(name="40K query edges inverse htok layer gru", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
     neptune.append_tag(["yes_no span", "bigru initial emb", "bottom-up", "ent relation", "no SRL rel", "Query node", "multihop edges", "residual", "w_yn"])
     neptune.set_property('server', 'IRGPU2')
     neptune.set_property('training_set_path', training_path)
