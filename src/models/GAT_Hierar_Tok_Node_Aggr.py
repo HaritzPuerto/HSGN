@@ -1369,7 +1369,7 @@ with neptune.create_experiment(name="curriculum learning large full. vs. 383", p
         model.train()
 
         # For each batch of training data...
-        for step, idx in enumerate(trange(list_idx_curriculum_learning)):
+        for step, idx in enumerate(tqdm(list_idx_curriculum_learning)):
             b_graph = list_graphs[idx]            
             if step % 10000 == 0 and step != 0:
                 #############################
