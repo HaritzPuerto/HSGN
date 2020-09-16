@@ -68,8 +68,8 @@ for idx in set_hard:
 
 # %%
 device = 'cuda'
-pretrained_weights = 'bert-base-cased'
-#pretrained_weights = 'bert-large-cased-whole-word-masking'
+#pretrained_weights = 'bert-base-cased'
+pretrained_weights = 'bert-large-cased-whole-word-masking'
 
 # ## HotpotQA Processing
 
@@ -1369,7 +1369,7 @@ with neptune.create_experiment(name="curriculum learning large full. vs. 383", p
         model.train()
 
         # For each batch of training data...
-        for step, idx in enumerate(list_idx_curriculum_learning):
+        for step, idx in enumerate(trange(list_idx_curriculum_learning)):
             b_graph = list_graphs[idx]            
             if step % 10000 == 0 and step != 0:
                 #############################
