@@ -47,6 +47,26 @@ with open(os.path.join(hotpot_qa_path, "hotpot_dev_distractor_v1.json"), "r") as
     hotpot_dev = json.load(f)
 
 # %%
+set_easy = set()
+set_med = set()
+set_hard = set()
+for ins_idx, ins in enumerate(hotpot_train):
+    if ins['level'] == 'easy':
+        set_easy.add(ins_idx)
+    elif ins['level'] == 'medium':
+        set_med.add(ins_idx)
+    elif ins['level'] == 'hard':
+        set_hard.add(ins_idx)
+
+list_idx_curriculum_learning = []
+for idx in set_easy:
+    list_idx_curriculum_learning.append(idx)
+for idx in set_med:
+    list_idx_curriculum_learning.append(idx)
+for idx in set_hard:
+    list_idx_curriculum_learning.append(idx)
+
+# %%
 device = 'cuda'
 pretrained_weights = 'bert-base-cased'
 #pretrained_weights = 'bert-large-cased-whole-word-masking'
@@ -56,8 +76,8 @@ pretrained_weights = 'bert-base-cased'
 # ## Processing
 
 # %%
-training_path = os.path.join(data_path, "processed/training/heterog_20200910_query_edges/")
-dev_path = os.path.join(data_path, "processed/dev/heterog_20200910_query_edges/")
+training_path = os.path.join(data_path, "processed/training/heterog_20200903_yn_span_large/")
+dev_path = os.path.join(data_path, "processed/dev/heterog_20200903_yn_span_large/")
 
 with open(os.path.join(training_path, 'list_span_idx.p'), 'rb') as f:
     list_span_idx = pickle.load(f)
@@ -1323,9 +1343,9 @@ model_path = '/workspace/ml-workspace/thesis_git/HSGN/models'
 best_eval_f1 = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="40K query edges inverse htok layer gru", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
+with neptune.create_experiment(name="curriculum learning large full. vs. 383", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
     neptune.append_tag(["yes_no span", "bigru initial emb", "bottom-up", "ent relation", "no SRL rel", "Query node", "multihop edges", "residual", "w_yn"])
-    neptune.set_property('server', 'IRGPU2')
+    neptune.set_property('server', 'IRGPU11')
     neptune.set_property('training_set_path', training_path)
     neptune.set_property('dev_set_path', dev_path)
 
@@ -1349,8 +1369,8 @@ with neptune.create_experiment(name="40K query edges inverse htok layer gru", pa
         model.train()
 
         # For each batch of training data...
-        for step, b_graph in enumerate(tqdm(list_graphs)):
-            
+        for step, idx in enumerate(list_idx_curriculum_learning):
+            b_graph = list_graphs[idx]            
             if step % 10000 == 0 and step != 0:
                 #############################
                 ######### Validation ########
