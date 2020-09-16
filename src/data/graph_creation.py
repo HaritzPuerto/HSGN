@@ -96,7 +96,7 @@ class Dataset():
             list_entities = self.list_hotpot_ner[ins_idx]
             dict_idx = list_dict_idx[ins_idx]
             g, list_srl_edges_metadata, list_ent2ent_metadata, span_idx = self.create_graph(hotpot_instance, list_entities, dict_idx, list_context[ins_idx]['input_ids'], ins_idx)
-            self.build_tests(ins_idx, g, span_idx, hotpot_instance['answer'])
+            #self.build_tests(ins_idx, g, span_idx, hotpot_instance['answer'])
             list_graphs.append(g)
             list_span_idx.append(span_idx)
             if 'ent2ent_rel' in g.etypes:
