@@ -30,7 +30,6 @@ class DocumentRetrieval():
             question = sam['question']
             title_list = []
             context_list = []
-            sampled_idx_list = []
 
             input_ids_list = []
             token_type_list = []
@@ -40,11 +39,6 @@ class DocumentRetrieval():
             for doc in sam['context']:
                 title_list.append(doc[0])
                 context_list.append(" ".join(doc[1]))
-            for fact in sam['supporting_facts']:
-                sampled_idx = title_list.index(fact[0])
-                if sampled_idx in sampled_idx_list:
-                    continue
-                sampled_idx_list.append(sampled_idx)
 
             for idx in list(range(len(sam['context']))):
                 context = context_list[idx]
@@ -59,10 +53,9 @@ class DocumentRetrieval():
                 input_ids_list.append(encoded['input_ids'])
                 token_type_list.append(encoded['token_type_ids'])
                 attention_list.append(encoded['attention_mask'])
-                if idx in sampled_idx_list:
-                    label_list.append([0])
-                else:
-                    label_list.append([1])
+                label_list.append([0]) # need to put labels to make the code work
+                # labels can be fake. Something about the dimensionality of the output of the model
+
 
             input_ids_tensor = torch.tensor([f for f in input_ids_list], dtype=torch.long)
             token_type_tensor = torch.tensor([f for f in token_type_list], dtype=torch.long)
