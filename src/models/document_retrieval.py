@@ -7,6 +7,7 @@ from transformers import BertTokenizer
 from transformers import BertForSequenceClassification
 from torch.utils.data import TensorDataset, DataLoader, SequentialSampler
 import numpy as np
+from sklearn.metrics import accuracy_score
 
 
 class DocumentRetrieval():
@@ -18,111 +19,107 @@ class DocumentRetrieval():
             self.model.cuda()
 
     def predict_relevant_docs(self, data, batch_size=16, k=2):
-        dataloader = self.__create_dataloader(data, batch_size)
-        preds = self.__run_model(dataloader)
-        dict_ins2dict_doc2pred = self.output_logits2pred(data, k, preds)
+        _input = self.__create_input(data)
+        (recall2_idx, _, _) = self.__inference(_input)
+        dict_ins2dict_doc2pred = self._create_output_dictionary(recall2_idx)
         return dict_ins2dict_doc2pred
 
-    def __create_dataloader(self, dev_data, batch_size=16):
-        testing_classification_data = []
-        for ins in dev_data:
-            tmp = {
-                "_id": ins['_id'],
-                "question": ins['question'],
-                "doc_list":[],
-                "label": []
-            }
-            for doc in ins['context']:
-                full_doc = " ".join([sent for sent in doc[1]])
-                tmp["doc_list"].append(full_doc)
-            testing_classification_data.append(tmp)
+    def __create_input(self, dev_data):
+        batch_for_each_query = []
+        for sam in tqdm(dev_data):
+            question = sam['question']
+            title_list = []
+            context_list = []
+            sampled_idx_list = []
 
-        test_input_ids = []
-        test_attention_masks = []
-        sample_id = []
+            input_ids_list = []
+            token_type_list = []
+            attention_list = []
+            label_list = []
 
-        for idx, sam in enumerate(tqdm(testing_classification_data)):
-            for doc in sam['doc_list']:
-                encoded_dict = self.tokenizer.encode_plus(
-                        sam['question'], doc,
-                        add_special_tokens=True,
-                        max_length=128,
-                        pad_to_max_length=True,
-                        truncation=True,
-                        return_attention_mask=True,
-                        return_tensors='pt'
+            for doc in sam['context']:
+                title_list.append(doc[0])
+                context_list.append(" ".join(doc[1]))
+            for fact in sam['supporting_facts']:
+                sampled_idx = title_list.index(fact[0])
+                if sampled_idx in sampled_idx_list:
+                    continue
+                sampled_idx_list.append(sampled_idx)
+
+            for idx in list(range(len(sam['context']))):
+                context = context_list[idx]
+                encoded = self.tokenizer.encode_plus(
+                                                    question, context,
+                                                    add_special_tokens=True,
+                                                    max_length=128,
+                                                    pad_to_max_length=True,
+                                                    return_attention_mask=True,
+                                                    truncation=True,
                 )
-
-                test_input_ids.append(encoded_dict['input_ids'])
-                test_attention_masks.append(encoded_dict['attention_mask'])
-                sample_id.append(idx)
-
-        test_input_ids = torch.cat(test_input_ids, dim=0)
-        test_attention_masks = torch.cat(test_attention_masks, dim=0)
-        # Create the DataLoader.
-        prediction_data = TensorDataset(test_input_ids, test_attention_masks)
-        prediction_sampler = SequentialSampler(prediction_data)
-        prediction_dataloader = DataLoader(prediction_data, sampler=prediction_sampler, batch_size=batch_size)
-        return prediction_dataloader
-
-    def output_logits2pred(self, hotpot, k, preds):
-        dict_ins2dict_doc2pred = dict()
-        idx = 0
-        for ins_idx, ins in enumerate(hotpot):
-            doc2prob = []
-            for doc_idx, (title, _) in enumerate(ins['context']):
-                doc2prob.append(preds[idx][1])
-                idx += 1
-            # top k most relevant docs
-            list_preds = np.array(doc2prob).argsort()[-k:][::-1]
-            # create pred dict for this instace
-            dict_doc2pred = dict()
-            for doc_idx, (title, _) in enumerate(ins['context']):
-                if doc_idx in list_preds:
-                    dict_doc2pred[doc_idx] = 1
+                input_ids_list.append(encoded['input_ids'])
+                token_type_list.append(encoded['token_type_ids'])
+                attention_list.append(encoded['attention_mask'])
+                if idx in sampled_idx_list:
+                    label_list.append([0])
                 else:
-                    dict_doc2pred[doc_idx] = 0
-            dict_ins2dict_doc2pred[ins_idx] = dict_doc2pred
-        return dict_ins2dict_doc2pred
+                    label_list.append([1])
 
-    def recall(self, hotpot, pred):
-        labels = []
-        for ins in hotpot:
-            label_ins = []
-            set_titles = set([title for title, _ in ins['supporting_facts']])
-            for i, (title, _) in enumerate(ins['context']):
-                if title in set_titles:
-                    label_ins.append(1)
-                else:
-                    label_ins.append(0)
-            labels.append(label_ins)
-        recall = []
-        for i in range(len(hotpot)):
-            list_idx = np.array(labels[i]).argsort()[-2:][::-1]
-            correct = 0
-            for idx in list_idx:
-                if pred[i][idx] == 1:
-                    correct += 1
-            recall.append(correct / 2.0)
-        return np.mean(recall)
+            input_ids_tensor = torch.tensor([f for f in input_ids_list], dtype=torch.long)
+            token_type_tensor = torch.tensor([f for f in token_type_list], dtype=torch.long)
+            attention_tensor = torch.tensor([f for f in attention_list], dtype=torch.long)
+            label_tensor = torch.tensor([f for f in label_list], dtype=torch.long)
+            
+            batch_for_each_query.append((input_ids_tensor,
+                                         token_type_tensor,
+                                         attention_tensor,
+                                         label_tensor))
+        return batch_for_each_query
 
-    def __run_model(self, dataloader):
-        # Put model in evaluation mode
-        self.model.eval()
-        # Tracking variables 
+    def __inference(self, batch_for_each_query):
+        recall2_idx = []
+        recall3_idx = []
+        recall4_idx = []
         predictions = []
-        # Predict 
-        for batch in tqdm(dataloader):
-            batch = tuple(t.to(self.device) for t in batch)
-            b_input_ids, b_input_mask = batch
-            with torch.no_grad():
-              # Forward pass, calculate logit predictions
-                outputs = self.model(b_input_ids, token_type_ids=None, 
-                                     attention_mask=b_input_mask)
-            logits = outputs[0]
-          # Move logits and labels to CPU
-            logits = logits.detach().cpu().numpy()
-          # Store predictions and true labels
-            predictions.extend(logits)
-        softmax_predictions = torch.nn.functional.softmax(torch.tensor(predictions), dim=1)
-        return softmax_predictions
+
+        total_acc = 0
+        recall2 = 0
+        recall3 = 0
+        recall4 = 0
+        for step, batch in tqdm(enumerate(batch_for_each_query)):
+            b_input_ids = batch[0].to(self.device)
+            b_input_tokens = batch[1].to(self.device)
+            b_input_mask = batch[2].to(self.device)
+            b_labels = batch[3].to(self.device)
+            _, logits = self.model(b_input_ids, 
+                                    token_type_ids=b_input_tokens, 
+                                    attention_mask=b_input_mask, 
+                                    labels=b_labels)
+            label_cpu = b_labels.detach().cpu()
+            logit_cpu = logits.detach().cpu()
+            total_acc += accuracy_score(label_cpu.view(-1).numpy(), torch.argmax(logit_cpu, dim=1).numpy())
+
+            label_cpu_positive_pos = np.where(label_cpu.view(-1) == 0)[0]
+            top2_pos = logit_cpu.numpy()[:, 0].argsort()[-2:][::-1]
+            top3_pos = logit_cpu.numpy()[:, 0].argsort()[-3:][::-1]
+            top4_pos = logit_cpu.numpy()[:, 0].argsort()[-4:][::-1]
+
+            recall2_idx.append((top2_pos, len(label_cpu)))
+            recall3_idx.append((top3_pos, len(label_cpu)))
+            recall4_idx.append((top4_pos, len(label_cpu)))
+            predictions.append(logit_cpu.numpy()[:, 0])
+
+            recall2 += float(len(np.intersect1d(label_cpu_positive_pos, top2_pos))) / len(label_cpu_positive_pos)
+            recall3 += float(len(np.intersect1d(label_cpu_positive_pos, top3_pos))) / len(label_cpu_positive_pos)
+            recall4 += float(len(np.intersect1d(label_cpu_positive_pos, top4_pos))) / len(label_cpu_positive_pos)
+        return (recall2_idx, recall3_idx, recall4_idx)
+
+    def _create_output_dictionary(self, recall2_idx):
+        dict_recall2 = {}
+        for qid in range(len(recall2_idx)):
+            num_context = recall2_idx[qid][1]
+            dict_recall2[qid] = dict.fromkeys(range(num_context),0)
+
+            for predidx in recall2_idx[qid][0]:
+                dict_recall2[qid][predidx] = 1
+        return dict_recall2
+       

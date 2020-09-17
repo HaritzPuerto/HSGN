@@ -16,7 +16,7 @@ print("Loading HotpotQA")
 hotpotqa_path = 'external/'
 with open(os.path.join(data_path, hotpotqa_path, "input.json"), "r") as f:
     hotpot = json.load(f)
-
+hotpot = hotpot[:100]
 print("Loading the document retrieval model")
 doc_retr = DocumentRetrieval(device, doc_retr_model_path)
 print("Computing the relevant documents")
