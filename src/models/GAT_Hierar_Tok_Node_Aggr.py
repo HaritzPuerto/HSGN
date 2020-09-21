@@ -56,8 +56,7 @@ pretrained_weights = 'bert-base-cased'
 # ## Processing
 
 # %%
-training_path = os.path.join(data_path, "processed/training/heterog_20200910_query_edges/")
-dev_path = os.path.join(data_path, "processed/dev/heterog_20200910_query_edges/")
+training_path = os.path.join(data_path, "processed/training/heterog_20200920_query_edges_batching/")
 
 with open(os.path.join(training_path, 'list_span_idx.p'), 'rb') as f:
     list_span_idx = pickle.load(f)
@@ -72,6 +71,8 @@ tensor_token_type_ids = tensor_token_type_ids.to(device)
 
 
 # %%
+dev_path = os.path.join(data_path, "processed/dev/heterog_20200920_query_edges_batching/")
+
 with open(os.path.join(dev_path, 'list_span_idx.p'), 'rb') as f:
     dev_list_span_idx = pickle.load(f)
 dev_tensor_input_ids = torch.load(os.path.join(dev_path, 'tensor_input_ids.p'))
@@ -95,7 +96,10 @@ def add_metadata2graph(graph, metadata):
     for (node, dict_node) in metadata.items():
         for (k, v) in dict_node.items():
             if node in graph.ntypes:
-                graph.nodes[node].data[k] = torch.tensor(v)
+                data = torch.tensor(v, dtype=torch.long)
+                if k == 'st_end_idx':
+                    data = data.view(-1, 2)
+                graph.nodes[node].data[k] = data
     return graph
 
 
@@ -119,6 +123,31 @@ for (g_file, metadata_file) in tqdm(list_graph_metadata_files):
         # add metadata to the graph
         graph = add_metadata2graph(graph, metadata)
         list_graphs.append(graph)
+
+# %%
+for i, g in enumerate(list_graphs):
+    if (i+1) % 2 == 0:
+        for ntype in g.ntypes:
+            g.nodes[ntype].data['st_end_idx'] += 512
+
+
+# %%
+def collate(samples):
+    # The input `samples` is a list of pairs
+    #  (graph, label).
+    graphs, tensor_input_ids, tensor_attention_masks, tensor_token_type_ids, labels = map(list, zip(*samples))
+            
+    batched_graph = dgl.batch_hetero(graphs)
+    return (batched_graph, torch.stack(tensor_input_ids),
+            torch.stack(tensor_attention_masks), torch.stack(tensor_token_type_ids),
+            torch.tensor(labels))
+
+
+# %%
+from torch.utils.data import DataLoader
+zipped_input = list(zip(list_graphs, tensor_input_ids, tensor_attention_masks, tensor_token_type_ids, list_span_idx))
+data_loader = DataLoader(zipped_input, batch_size=2, shuffle=False,
+                         collate_fn=collate)
 
 # %%
 # training_graphs_path = os.path.join(training_path, 'graphs')
@@ -381,13 +410,13 @@ class HeteroRGCNLayer(nn.Module):
         funcs = {}
                 
         for srctype, etype, dsttype in G.canonical_etypes:
-            if 'h' not in G.nodes[srctype].data:
+            if G.number_of_nodes(srctype) and 'h' not in G.nodes[srctype].data:
                 G.nodes[srctype].data['h'] = self.feat_drop(feat_dict[srctype])
-            if 'h' not in G.nodes[dsttype].data:
+            if G.number_of_nodes(dsttype) and 'h' not in G.nodes[dsttype].data:
                 G.nodes[dsttype].data['h'] = self.feat_drop(feat_dict[dsttype])
-            if self.residual and 'resid' not in G.nodes[srctype].data:
+            if G.number_of_nodes(srctype) and self.residual and 'resid' not in G.nodes[srctype].data:
                 G.nodes[srctype].data['resid'] = feat_dict[srctype]
-            if self.residual and 'resid' not in G.nodes[dsttype].data:
+            if G.number_of_nodes(dsttype) and self.residual and 'resid' not in G.nodes[dsttype].data:
                 G.nodes[dsttype].data['resid'] = feat_dict[dsttype]
             
             if "2tok" in etype:
@@ -417,12 +446,13 @@ class HeteroRGCNLayer(nn.Module):
         
         out = None
         if self.residual:
-            out = {ntype : (G.nodes[ntype].data['h'] + G.nodes[ntype].data['resid']) for ntype in G.ntypes}
+            out = {ntype : (G.nodes[ntype].data['h'] + G.nodes[ntype].data['resid']) for ntype in G.ntypes if G.number_of_nodes(ntype) > 0}
             # remove resid from the memory since it's not needed
             for ntype in G.ntypes:
-                G.nodes[ntype].data.pop('resid')                 
+                if G.number_of_nodes(ntype) > 0:
+                    G.nodes[ntype].data.pop('resid')                 
         else:
-            out = {ntype : G.nodes[ntype].data.pop('h') for ntype in G.ntypes}
+            out = {ntype : G.nodes[ntype].data.pop('h') for ntype in G.ntypes if G.number_of_nodes(ntype) > 0}
 
         # return the updated node feature dictionary
         self.clean_memory(G)
@@ -586,7 +616,8 @@ class HGNModel(BertPreTrainedModel):
         assert not torch.isnan(sequence_output).any()
         # Graph forward & node classification
         graph_out, graph_emb = self.graph_forward(graph, sequence_output, train)
-        sequence_output = graph_emb['tok'].unsqueeze(0)
+        sequence_output = graph_emb['tok'].view(sequence_output.shape)
+        #sequence_output = graph_emb['tok'].unsqueeze(0)
         # span prediction
         span_loss = None
         start_logits = None
@@ -688,7 +719,7 @@ class HGNModel(BertPreTrainedModel):
             assert not torch.isnan(logits_srl).any()
             logits_ent = None
             ent_labels = None
-            if 'ent' in graph.ntypes:
+            if 'ent' in graph.ntypes and graph.number_of_nodes('ent') > 0:
                 logits_ent = self.ent_classifier(torch.cat((graph_emb['ent'],
                                                             initial_graph_emb['ent']), dim=1))
                 # shape [num_ent_nodes, 2]
@@ -756,9 +787,10 @@ class HGNModel(BertPreTrainedModel):
         '''
         Inputs:
             - graph
-            - bert_context_emb shape [1, #max len, 768]
+            - bert_context_emb shape [batch_size, #max len, 768]
         '''
-        input_gru = bert_context_emb[0].view(-1, 1, dict_params['in_feats'])
+        batch_size = bert_context_emb.shape[0]
+        input_gru = bert_context_emb.view(-1, batch_size, dict_params['in_feats'])
         encoder_output, encoder_hidden = self.bigru(input_gru)
         encoder_output = encoder_output.view(-1, dict_params['in_feats']*2)
         graph_emb = {ntype : nn.Parameter(torch.Tensor(graph.number_of_nodes(ntype), dict_params['in_feats']))
@@ -869,8 +901,7 @@ class HGNModel(BertPreTrainedModel):
         end_logits = end_logits.squeeze(-1)
 
         total_loss = None
-        if ((start_positions is not None and end_positions is not None) and
-            (start_positions != -1 and end_positions != -1)):
+        if start_positions is not None and end_positions is not None:
             loss_fct = nn.CrossEntropyLoss()
             start_loss = loss_fct(start_logits, start_positions)
             end_loss = loss_fct(end_logits, end_positions)
@@ -906,23 +937,27 @@ model.cuda()
 # 
 
 # %%
-# for step, b_graph in enumerate(tqdm(list_graphs)):
+# for step, batch in enumerate(tqdm(data_loader)):
 #     model.zero_grad()
 #     # forward
-#     input_ids=tensor_input_ids[step].unsqueeze(0).to(device)
-#     attention_mask=tensor_attention_masks[step].unsqueeze(0).to(device)
-#     token_type_ids=tensor_token_type_ids[step].unsqueeze(0).to(device) 
-#     start_positions=torch.tensor([list_span_idx[step][0]], device='cuda')
-#     end_positions=torch.tensor([list_span_idx[step][1]], device='cuda')
+#     (b_graph, 
+#      input_ids, 
+#      attention_mask,
+#      token_type_ids,
+#      list_span_idx) = batch
+#     start_positions = list_span_idx[:,0].to(device)
+#     end_positions = list_span_idx[:,1].to(device)
+# #     input_ids=tensor_input_ids[step].unsqueeze(0).to(device)
+# #     attention_mask=tensor_attention_masks[step].unsqueeze(0).to(device)
+# #     token_type_ids=tensor_token_type_ids[step].unsqueeze(0).to(device) 
+# #     start_positions=torch.tensor([list_span_idx[step][0]], device='cuda')
+# #     end_positions=torch.tensor([list_span_idx[step][1]], device='cuda')
 #     output = model(b_graph,
 #                    input_ids=input_ids,
 #                    attention_mask=attention_mask,
 #                    token_type_ids=token_type_ids, 
 #                    start_positions=start_positions,
 #                    end_positions=end_positions)
-
-# %%
-train_dataloader = list_graphs
 
 # %%
 lr = 1e-5
@@ -1289,14 +1324,17 @@ class Validation():
 
 
 # %%
-# validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
-#                         dev_tensor_input_ids, dev_tensor_attention_masks, 
-#                         dev_tensor_token_type_ids,
-#                         dev_list_span_idx)
-# metrics = validation.do_validation()
+dev_list_graphs[0]
 
 # %%
-# metrics
+validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
+                        dev_tensor_input_ids, dev_tensor_attention_masks, 
+                        dev_tensor_token_type_ids,
+                        dev_list_span_idx)
+metrics = validation.do_validation()
+
+# %%
+metrics
 
 # %%
 import os
@@ -1323,7 +1361,7 @@ model_path = '/workspace/ml-workspace/thesis_git/HSGN/models'
 best_eval_f1 = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="40K query edges inverse htok layer gru", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
+with neptune.create_experiment(name="batch size 2", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
     neptune.append_tag(["yes_no span", "bigru initial emb", "bottom-up", "ent relation", "no SRL rel", "Query node", "multihop edges", "residual", "w_yn"])
     neptune.set_property('server', 'IRGPU2')
     neptune.set_property('training_set_path', training_path)
@@ -1349,7 +1387,7 @@ with neptune.create_experiment(name="40K query edges inverse htok layer gru", pa
         model.train()
 
         # For each batch of training data...
-        for step, b_graph in enumerate(tqdm(list_graphs)):
+        for step, batch in enumerate(tqdm(data_loader)):
             
             if step % 10000 == 0 and step != 0:
                 #############################
@@ -1371,11 +1409,15 @@ with neptune.create_experiment(name="40K query edges inverse htok layer gru", pa
             neptune.log_metric('step', step)
             model.zero_grad()  
             # forward
-            input_ids=tensor_input_ids[step].unsqueeze(0).to(device)
-            attention_mask=tensor_attention_masks[step].unsqueeze(0).to(device)
-            token_type_ids=tensor_token_type_ids[step].unsqueeze(0).to(device) 
-            start_positions=torch.tensor([list_span_idx[step][0]], device='cuda')
-            end_positions=torch.tensor([list_span_idx[step][1]], device='cuda')
+            (b_graph, 
+             input_ids, 
+             attention_mask,
+             token_type_ids,
+             list_span_idx) = batch
+            
+            start_positions = list_span_idx[:,0].to(device)
+            end_positions = list_span_idx[:,1].to(device)
+            
             output = model(b_graph,
                            input_ids=input_ids,
                            attention_mask=attention_mask,
