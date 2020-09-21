@@ -110,7 +110,7 @@ list_metadata_files = natural_sort([f for f in listdir(training_metadata_path) i
 list_graph_metadata_files = list(zip(list_graph_files, list_metadata_files))
 
 list_graphs = []
-for (g_file, metadata_file) in tqdm(list_graph_metadata_files):
+for (g_file, metadata_file) in tqdm(list_graph_metadata_files[0:1000]):
     if ".bin" in g_file:
         with open(os.path.join(training_graphs_path, g_file), "rb") as f:
             graph = pickle.load(f)
@@ -270,20 +270,20 @@ class GAT(nn.Module):
 
 
 # %%
-class HeteroRGCNLayer(nn.Module):
-    def __init__(self, in_size, out_size, etypes, feat_drop = 0., attn_drop = 0., residual = False):
-        super(HeteroRGCNLayer, self).__init__()
+class HSGNLayer(nn.Module):
+    def __init__(self, in_size, out_size, feat_drop = 0., attn_drop = 0., residual = False):
+        super(HSGNLayer, self).__init__()
         self.in_size = in_size
+        self.out_size = out_size
         # W_r for each edge type
         self.tok_trans = nn.Linear(in_size, out_size)
-        self.tok_att = nn.Linear(2 * in_size, out_size)
-
-        self.rel_trans = nn.Linear(2 * in_size, out_size)
+        self.tok_att = nn.Linear(2 * out_size, out_size)
 
         self.node_trans = nn.Linear(in_size, out_size)
-        self.node_att = nn.Linear(2 * in_size, out_size)
+        self.node_att = nn.Linear(2 * out_size, out_size)
 
-        self.common_space_trans = nn.Linear(in_size, out_size)
+        self.rel_trans = nn.Linear(in_size + 768, out_size)
+        self.common_space_trans = nn.Linear(out_size, out_size)
         
         self.gru_node2tok = nn.GRU(in_size, out_size)
         
@@ -291,7 +291,7 @@ class HeteroRGCNLayer(nn.Module):
         self.attn_drop = nn.Dropout(attn_drop)
         
         self.at_trans = nn.Linear(in_size, out_size)
-        self.at_att = nn.Linear(2 * in_size, out_size)
+        self.at_att = nn.Linear(2 * out_size, out_size)
 
         # self.common_space = nn.Linear(in_size, out_size)
         self.residual = residual
@@ -313,7 +313,8 @@ class HeteroRGCNLayer(nn.Module):
         assert not torch.isnan(rel_emb).any()
 #         return {'rel': rel_emb, 'srl': edges.src['h']}
         src = edges.src['h']
-        m = self.common_space_trans(self.rel_trans(torch.cat((src, rel_emb), dim=1)))
+        ent_rel = self.rel_trans(torch.cat((src, rel_emb), dim=1))
+        m = self.common_space_trans(ent_rel)
         # m: [num srl x 768]
         dst = self.node_trans(edges.dst['h'])
         cat_uv = torch.cat([m,
@@ -335,18 +336,13 @@ class HeteroRGCNLayer(nn.Module):
         '''
         e_ij = LeakyReLU(W * (Wh_j || Wh_i))
         '''
+#         print("src", edges.src['h'].shape)
+#         print("tok", edges.dst['h'].shape)
         src = edges.src['h'].view(1,-1,self.in_size)
         tok = edges.dst['h'].view(1,-1,self.in_size) # the token node
-        m = self.gru_node2tok(src, tok)[0].squeeze(0)
+        gru_input = torch.cat((src, tok), dim=0)
+        m = self.gru_node2tok(gru_input)[0].squeeze(0)
         return {'m': m}
-    
-    def reduce_func_srl2tok(self, nodes):
-        h = torch.sum(nodes.mailbox['m'], dim=1)
-        return {'h_srl': h}
-    
-    def reduce_func_srl2tok(self, nodes):
-        h = torch.sum(nodes.mailbox['m'], dim=1)
-        return {'h_ent': h}
     
     def message_func_regular_node(self, edges):
         '''
@@ -400,18 +396,21 @@ class HeteroRGCNLayer(nn.Module):
                 funcs[etype] = (self.message_func_AT_node, self.reduce_func)
             else:
                 funcs[etype] = (self.message_func_regular_node, self.reduce_func)
-        G.multi_update_all(funcs, 'sum')
+        
         ## update tokens
         G['srl2tok'].update_all(self.message_func_2tok, fn.sum('m', 'h_srl'))
         if 'ent' in G.ntypes:
             G['ent2tok'].update_all(self.message_func_2tok, fn.sum('m', 'h_ent'))
+        ## update all graph
+        G.multi_update_all(funcs, 'sum')
+        
         #batched all tokens since we want to put into the GRU (srl, ent, hidden=tok) so batch size = 512
-        h_tok = G.nodes['tok'].data['h'].view(1,-1,self.in_size)
-        h_srl = G.nodes['tok'].data.pop('h_srl').view(1,-1,self.in_size)
+        h_tok = G.nodes['tok'].data['h'].view(1,-1,self.out_size)
+        h_srl = G.nodes['tok'].data.pop('h_srl').view(1,-1,self.out_size)
         gru_input = h_srl
         if 'h_ent' in G.nodes['tok'].data:
             # there can be an instance without entities (not common anyway)
-            h_ent = G.nodes['tok'].data.pop('h_ent').view(1,-1,self.in_size)
+            h_ent = G.nodes['tok'].data.pop('h_ent').view(1,-1,self.out_size)
             gru_input = torch.cat((h_ent, h_tok), dim=0)            
         G.nodes['tok'].data['h'] = self.gru_node2tok(gru_input, h_srl)[0][-1]
         
@@ -455,12 +454,39 @@ class HeteroRGCNLayer(nn.Module):
 
 
 # %%
-class HeteroRGCN(nn.Module):
-    def __init__(self, etypes, in_size, hidden_size, out_size, feat_drop, attn_drop, residual):
-        super(HeteroRGCN, self).__init__()
+class MultiHeadHSGNLayer(nn.Module):
+    def __init__(self, in_dim, out_dim, num_heads, feat_drop, attn_drop, residual, merge='cat'):
+        super(MultiHeadHSGNLayer, self).__init__()
+        self.heads = nn.ModuleList()
+        for i in range(num_heads):
+            self.heads.append(HSGNLayer(in_dim, out_dim, feat_drop, attn_drop, residual))
+        self.merge = merge
+
+    def forward(self, graph, emb, bert_token_emb):
+        graph_emb = None
+        head_outs = [attn_head(graph, emb, bert_token_emb) for attn_head in self.heads]
+        if self.merge == 'cat':
+            # concat on the output feature dimension (dim=1)
+            for i, head in enumerate(head_outs):
+                if i == 0:
+                    graph_emb = head
+                else:
+                    for k in head.keys():
+                        graph_emb[k] = torch.cat((graph_emb[k], head[k]), dim=1)
+            return graph_emb
+        else:
+            # merge using average
+            return torch.mean(torch.stack(head_outs))
+
+
+# %%
+class HSGN(nn.Module):
+    def __init__(self, etypes, in_size, hidden_size, out_size, feat_drop, attn_drop, residual, num_heads=3):
+        super(HSGN, self).__init__()
         self.in_size = in_size
-        self.layer1 = HeteroRGCNLayer(in_size, hidden_size, etypes, feat_drop, attn_drop, residual)
-        self.layer2 = HeteroRGCNLayer(hidden_size, out_size, etypes, feat_drop, attn_drop, residual)
+        self.num_heads = num_heads
+        self.layer1 = MultiHeadHSGNLayer(in_size, hidden_size, num_heads, feat_drop, attn_drop, residual)
+        self.layer2 = MultiHeadHSGNLayer(hidden_size * num_heads, out_size, 1, feat_drop, attn_drop, residual)
         self.gru_layer_lvl = nn.GRU(in_size, out_size)
         
         self.init_params()
@@ -469,9 +495,11 @@ class HeteroRGCN(nn.Module):
         h_tok0 = emb['tok'].view(1,-1,self.in_size)
         
         h_dict = self.layer1(G, emb, bert_token_emb)
-        h_tok1 = h_dict['tok'].view(1,-1,self.in_size)
+        h_tok1 = h_dict['tok'].view(1,-1,self.in_size*self.num_heads)
         h_dict = {k : F.leaky_relu(h) for k, h in h_dict.items()}
-        
+        for k in h_dict.keys():
+            print(k, h_dict[k].shape)
+        print("LAYER 2 ############################################")
         h_dict = self.layer2(G, h_dict, bert_token_emb)
         h_tok2 = h_dict['tok'].view(1,-1,self.in_size)
         
@@ -479,8 +507,7 @@ class HeteroRGCN(nn.Module):
         # intuition: add the new knowledge from the graph in the original token emb
         # origianl tok emb do not contain graph info, so they can be more suitable for span pred
         # gru can remove the graph info we don't need for span pred
-        gru_input = torch.cat((h_tok1, h_tok0), dim=0)
-        tok_emb = self.gru_layer_lvl(gru_input, h_tok2)[0][-1].view(-1, self.in_size)
+        tok_emb = self.gru_layer_lvl(h_tok2, h_tok0)[0][-1].view(-1, self.in_size)
         h_dict['tok'] = tok_emb
         return h_dict
     
@@ -500,7 +527,7 @@ dict_params = {'in_feats': bert_dim, 'out_feats': bert_dim, 'feat_drop': 0.1, 'a
                'weight_sent_loss': 1, 'weight_srl_loss': 1, 'weight_ent_loss': 1,
                'weight_span_loss': 2, 'weight_ans_type_loss': 1, 
                'gat_layers': 2, 'etypes': graph.etypes}
-class HGNModel(BertPreTrainedModel):
+class HSGNModel(BertPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
         self.bert = BertModel(config)
@@ -515,7 +542,7 @@ class HGNModel(BertPreTrainedModel):
                                     dropout = dict_params['feat_drop'], bidirectional=True)
         self.gru_aggregation = nn.Linear(2*dict_params['in_feats'], dict_params['in_feats'])
         # Graph Neural Network
-        self.rgcn = HeteroRGCN(dict_params['etypes'], dict_params['in_feats'], dict_params['in_feats'],
+        self.rgcn = HSGN(dict_params['etypes'], dict_params['in_feats'], dict_params['in_feats'],
                                dict_params['in_feats'], dict_params['feat_drop'], dict_params['attn_drop'], 
                                dict_params['residual'])
         ## node classification
@@ -883,7 +910,7 @@ class HGNModel(BertPreTrainedModel):
 
 from transformers import AdamW, BertConfig
 
-model = HGNModel.from_pretrained(
+model = HSGNModel.from_pretrained(
     pretrained_weights, # Use the 12-layer BERT model, with an cased vocab.
     num_labels = 2, # The number of output labels--2 for binary classification.
                     # You can increase this for multi-class tasks.   
@@ -906,20 +933,26 @@ model.cuda()
 # 
 
 # %%
-# for step, b_graph in enumerate(tqdm(list_graphs)):
-#     model.zero_grad()
-#     # forward
-#     input_ids=tensor_input_ids[step].unsqueeze(0).to(device)
-#     attention_mask=tensor_attention_masks[step].unsqueeze(0).to(device)
-#     token_type_ids=tensor_token_type_ids[step].unsqueeze(0).to(device) 
-#     start_positions=torch.tensor([list_span_idx[step][0]], device='cuda')
-#     end_positions=torch.tensor([list_span_idx[step][1]], device='cuda')
-#     output = model(b_graph,
-#                    input_ids=input_ids,
-#                    attention_mask=attention_mask,
-#                    token_type_ids=token_type_ids, 
-#                    start_positions=start_positions,
-#                    end_positions=end_positions)
+for step, b_graph in enumerate(tqdm(list_graphs)):
+    model.zero_grad()
+    # forward
+    input_ids=tensor_input_ids[step].unsqueeze(0).to(device)
+    attention_mask=tensor_attention_masks[step].unsqueeze(0).to(device)
+    token_type_ids=tensor_token_type_ids[step].unsqueeze(0).to(device) 
+    start_positions=torch.tensor([list_span_idx[step][0]], device='cuda')
+    end_positions=torch.tensor([list_span_idx[step][1]], device='cuda')
+    output = model(b_graph,
+                   input_ids=input_ids,
+                   attention_mask=attention_mask,
+                   token_type_ids=token_type_ids, 
+                   start_positions=start_positions,
+                   end_positions=end_positions)
+
+# %%
+torch.cuda.empty_cache()
+
+# %%
+model.rgcn.layer2.heads[0].gru_node2tok
 
 # %%
 train_dataloader = list_graphs
@@ -1323,7 +1356,7 @@ model_path = '/workspace/ml-workspace/thesis_git/HSGN/models'
 best_eval_f1 = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="40K query edges inverse htok layer gru", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
+with neptune.create_experiment(name="3 attn. heads vs. 397", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
     neptune.append_tag(["yes_no span", "bigru initial emb", "bottom-up", "ent relation", "no SRL rel", "Query node", "multihop edges", "residual", "w_yn"])
     neptune.set_property('server', 'IRGPU2')
     neptune.set_property('training_set_path', training_path)
