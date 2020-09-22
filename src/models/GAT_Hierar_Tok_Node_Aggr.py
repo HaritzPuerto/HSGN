@@ -43,6 +43,7 @@ hotpot_qa_path = os.path.join(data_path, "external")
 
 with open(os.path.join(hotpot_qa_path, "hotpot_train_v1.1.json"), "r") as f:
     hotpot_train = json.load(f)
+
 with open(os.path.join(hotpot_qa_path, "hotpot_dev_distractor_v1.json"), "r") as f:
     hotpot_dev = json.load(f)
 
@@ -66,18 +67,19 @@ for idx in set_med:
 for idx in set_hard:
     list_idx_curriculum_learning.append(idx)
 
+
 # %%
 device = 'cuda'
-#pretrained_weights = 'bert-base-cased'
-pretrained_weights = 'bert-large-cased-whole-word-masking'
+pretrained_weights = 'bert-base-cased'
+#pretrained_weights = 'bert-large-cased-whole-word-masking'
 
 # ## HotpotQA Processing
 
 # ## Processing
 
 # %%
-training_path = os.path.join(data_path, "processed/training/heterog_20200903_yn_span_large/")
-dev_path = os.path.join(data_path, "processed/dev/heterog_20200903_yn_span_large/")
+training_path = os.path.join(data_path, "processed/training/heterog_20200920_query_edges/")
+dev_path = os.path.join(data_path, "processed/dev/heterog_20200920_query_edges/")
 
 with open(os.path.join(training_path, 'list_span_idx.p'), 'rb') as f:
     list_span_idx = pickle.load(f)
@@ -1343,7 +1345,7 @@ model_path = '/workspace/ml-workspace/thesis_git/HSGN/models'
 best_eval_f1 = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="curriculum learning large full. vs. 383", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
+with neptune.create_experiment(name="curriculum learning vs. 397", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
     neptune.append_tag(["yes_no span", "bigru initial emb", "bottom-up", "ent relation", "no SRL rel", "Query node", "multihop edges", "residual", "w_yn"])
     neptune.set_property('server', 'IRGPU11')
     neptune.set_property('training_set_path', training_path)
@@ -1369,8 +1371,9 @@ with neptune.create_experiment(name="curriculum learning large full. vs. 383", p
         model.train()
 
         # For each batch of training data...
+        #for step, b_graph in enumerate(tqdm(list_graphs)):
         for step, idx in enumerate(tqdm(list_idx_curriculum_learning)):
-            b_graph = list_graphs[idx]            
+            b_graph = list_graphs[idx]    
             if step % 10000 == 0 and step != 0:
                 #############################
                 ######### Validation ########
@@ -1391,11 +1394,11 @@ with neptune.create_experiment(name="curriculum learning large full. vs. 383", p
             neptune.log_metric('step', step)
             model.zero_grad()  
             # forward
-            input_ids=tensor_input_ids[step].unsqueeze(0).to(device)
-            attention_mask=tensor_attention_masks[step].unsqueeze(0).to(device)
-            token_type_ids=tensor_token_type_ids[step].unsqueeze(0).to(device) 
-            start_positions=torch.tensor([list_span_idx[step][0]], device='cuda')
-            end_positions=torch.tensor([list_span_idx[step][1]], device='cuda')
+            input_ids=tensor_input_ids[idx].unsqueeze(0).to(device)
+            attention_mask=tensor_attention_masks[idx].unsqueeze(0).to(device)
+            token_type_ids=tensor_token_type_ids[idx].unsqueeze(0).to(device) 
+            start_positions=torch.tensor([list_span_idx[idx][0]], device='cuda')
+            end_positions=torch.tensor([list_span_idx[idx][1]], device='cuda')
             output = model(b_graph,
                            input_ids=input_ids,
                            attention_mask=attention_mask,
@@ -1479,6 +1482,6 @@ with neptune.create_experiment(name="curriculum learning large full. vs. 383", p
 
     print("Total training took {:} (h:mm:ss)".format(format_time(time.time()-total_t0)))
     # create a zip file for the folder of the model
-    zipdir(model_path, os.path.join(model_path, 'checkpoint.zip'))
-    # upload the model to neptune
-    neptune.send_artifact(os.path.join(model_path, 'checkpoint.zip'))
+    # zipdir(model_path, os.path.join(model_path, 'checkpoint.zip'))
+    # # upload the model to neptune
+    # neptune.send_artifact(os.path.join(model_path, 'checkpoint.zip'))
