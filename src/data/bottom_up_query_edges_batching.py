@@ -812,7 +812,24 @@ class Dataset():
         dict_edges[('srl', 'query_srl2srl', 'srl')] = list_q_srl2srl
         #if list_query2sent_pred != []:
         dict_edges['query', 'query2srl_pred', 'sent'] = list_query2sent_pred
+        
+        # PAD when no node
+        if len(list_srl_loc2srl) == 0:
+            # no srl_loc node
+            dict_edges['srl_loc', 'srl_loc2self', 'srl_loc'] = [(0,0)]
+        else:
+            dict_edges['srl_loc', 'srl_loc2self', 'srl_loc'] = [(u,u) for u in range(srl_loc_node_idx)]
+        if len(list_srl_tmp2srl) == 0:
+            # no srl_tmp node
+            dict_edges['srl_tmp', 'srl_tmp2self', 'srl_tmp'] = [(0,0)]
+        else:
+            dict_edges['srl_tmp', 'srl_tmp2self', 'srl_tmp'] = [(u,u) for u in range(srl_tmp_node_idx)]
+        if len(list_ent2ent_self) == 0:
+            dict_edges[('ent', 'ent2ent_self', 'ent')] = [(0,0)]
+        dict_edges['query', 'query2self', 'query'] = [(0,0)]
+        
         graph = dgl.heterograph(dict_edges)
+        
         graph_metadata = dict()
         # doc metadata
         graph_metadata['doc'] = dict()
@@ -830,21 +847,32 @@ class Dataset():
 #         graph_metadata['srl']['list_context_idx'] = np.array(list_srl_context_idx).reshape(-1,1)
         graph_metadata['srl']['labels'] = np.array(list_srl_lbl).reshape(-1,1)
         # srl_loc metadata
-        #if list_srl_loc2srl != []:
-        graph_metadata['srl_loc'] = dict()
-        graph_metadata['srl_loc']['st_end_idx'] =  np.array(list_srl_loc_st_end_idx)
+        if len(list_srl_loc_st_end_idx) > 0:
+            graph_metadata['srl_loc'] = dict()
+            graph_metadata['srl_loc']['st_end_idx'] = np.array(list_srl_loc_st_end_idx)
+        else:
+            graph_metadata['srl_loc'] = dict()
+            graph_metadata['srl_loc']['st_end_idx'] = np.array([[0,1]])
 #             graph_metadata['srl_loc']['list_context_idx'] = np.array(list_srl_loc_context_idx).reshape(-1,1)
         # srl_tmp metadata
-        #if list_srl_tmp2srl != []:
-        graph_metadata['srl_tmp'] = dict()
-        graph_metadata['srl_tmp']['st_end_idx'] =  np.array(list_srl_tmp_st_end_idx)
+        if len(list_srl_tmp_st_end_idx) > 0:
+            graph_metadata['srl_tmp'] = dict()
+            graph_metadata['srl_tmp']['st_end_idx'] = np.array(list_srl_tmp_st_end_idx)
 #             graph_metadata['srl_tmp']['list_context_idx'] = np.array(list_srl_tmp_context_idx).reshape(-1,1) 
+        else:
+            graph_metadata['srl_tmp'] = dict()
+            graph_metadata['srl_tmp']['st_end_idx'] = np.array([[0,1]])
         # ent metadata
-        #if list_ent_lbl != []:
-        graph_metadata['ent'] = dict()
-        graph_metadata['ent']['st_end_idx'] =  np.array(list_ent_st_end_idx)
+        if len(list_ent_st_end_idx) > 0:
+            graph_metadata['ent'] = dict()
+            graph_metadata['ent']['st_end_idx'] =  np.array(list_ent_st_end_idx)
     #         graph_metadata['ent']['list_context_idx'] = np.array(list_ent_context_idx).reshape(-1,1)
-        graph_metadata['ent']['labels'] = np.array(list_ent_lbl).reshape(-1,1)
+            graph_metadata['ent']['labels'] = np.array(list_ent_lbl).reshape(-1,1)
+        else:
+            graph_metadata['ent'] = dict()
+            graph_metadata['ent']['st_end_idx'] =  np.array([[0,1]])
+    #         graph_metadata['ent']['list_context_idx'] = np.array(list_ent_context_idx).reshape(-1,1)
+            graph_metadata['ent']['labels'] = np.array([0]).reshape(-1,1)
         # token metadata
         graph_metadata['tok'] = dict()
         graph_metadata['tok']['st_end_idx'] =  np.array(list_token_st_end_idx)
@@ -852,10 +880,7 @@ class Dataset():
         graph_metadata['tok']['labels'] = np.array(list_token_lbl).reshape(-1,1)
         # query metadata
         graph_metadata['query'] = dict()
-        if graph.number_of_nodes('query') > 0:
-            graph_metadata['query']['st_end_idx'] =  np.array(list_query_st_end_idx)
-        else:
-            graph_metadata['query']['st_end_idx'] =  np.array([])
+        graph_metadata['query']['st_end_idx'] = np.array(list_query_st_end_idx)
         # Answer Type metadata
 #         graph_metadata['AT'] = dict()
 #         graph_metadata['AT']['labels'] = np.array([at_label]).reshape(-1,1)
@@ -1146,15 +1171,18 @@ def print_ent_rel():
 
 # %%
 for g_idx, list_dict_edge in enumerate(list_list_srl_edges_metadata):
-    list_graphs[g_idx].edges['srl2srl'].data['rel_type'] = torch.tensor([edge['rel_type'] for edge in list_dict_edge], dtype=torch.long)
-    list_graphs[g_idx].edges['srl2srl'].data['span_idx'] = torch.tensor([edge['span_idx'] for edge in list_dict_edge], dtype=torch.long).view(-1,2)
-
+    if len(list_dict_edge) != 0:
+        list_graphs[g_idx].edges['srl2srl'].data['rel_type'] = torch.tensor([edge['rel_type'] for edge in list_dict_edge], dtype=torch.long)
+        list_graphs[g_idx].edges['srl2srl'].data['span_idx'] = torch.tensor([edge['span_idx'] for edge in list_dict_edge], dtype=torch.long).view(-1,2)
+    else:
+        list_graphs[g_idx].edges['srl2srl'].data['rel_type'] = torch.tensor([0], dtype=torch.long)
+        list_graphs[g_idx].edges['srl2srl'].data['span_idx'] = torch.tensor([[0,1]], dtype=torch.long).view(-1,2)
 for g_idx, list_dict_edge in enumerate(list_list_ent2ent_metadata):
     if 'ent2ent_rel' in list_graphs[g_idx].etypes:
         list_graphs[g_idx].edges['ent2ent_rel'].data['rel_type'] = torch.tensor([edge['rel_type'] for edge in list_dict_edge], dtype=torch.long)
         list_graphs[g_idx].edges['ent2ent_rel'].data['span_idx'] = torch.tensor([edge['span_idx'] for edge in list_dict_edge], dtype=torch.long).view(-1,2)
 # %%
-training_path = os.path.join(data_path, 'processed/training/heterog_20200920_query_edges_batching')
+training_path = os.path.join(data_path, 'processed/training/heterog_20200921_query_edges_batching')
 training_graph_path = os.path.join(training_path, 'graphs')
 training_metadata_path = os.path.join(training_path, 'metadata')
 
@@ -1241,7 +1269,7 @@ tensor_token_type_ids = torch.tensor(list_token_type_ids)
 tensor_attention_masks = torch.tensor(list_attention_masks)
 
 # %%
-dev_path = os.path.join(data_path, 'processed/dev/heterog_20200920_query_edges_batching')
+dev_path = os.path.join(data_path, 'processed/dev/heterog_20200921_query_edges_batching')
 dev_graph_path = os.path.join(dev_path, 'graphs')
 dev_metadata_path = os.path.join(dev_path, 'metadata')
 

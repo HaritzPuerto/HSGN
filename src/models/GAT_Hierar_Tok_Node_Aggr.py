@@ -17,6 +17,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.data import DataLoader
 from transformers import *
 
 import dgl.function as fn
@@ -56,7 +57,7 @@ pretrained_weights = 'bert-base-cased'
 # ## Processing
 
 # %%
-training_path = os.path.join(data_path, "processed/training/heterog_20200920_query_edges_batching/")
+training_path = os.path.join(data_path, "processed/training/heterog_20200921_query_edges_batching/")
 
 with open(os.path.join(training_path, 'list_span_idx.p'), 'rb') as f:
     list_span_idx = pickle.load(f)
@@ -71,7 +72,7 @@ tensor_token_type_ids = tensor_token_type_ids.to(device)
 
 
 # %%
-dev_path = os.path.join(data_path, "processed/dev/heterog_20200920_query_edges_batching/")
+dev_path = os.path.join(data_path, "processed/dev/heterog_20200921_query_edges_batching/")
 
 with open(os.path.join(dev_path, 'list_span_idx.p'), 'rb') as f:
     dev_list_span_idx = pickle.load(f)
@@ -144,9 +145,19 @@ def collate(samples):
 
 
 # %%
-from torch.utils.data import DataLoader
-zipped_input = list(zip(list_graphs, tensor_input_ids, tensor_attention_masks, tensor_token_type_ids, list_span_idx))
-data_loader = DataLoader(zipped_input, batch_size=2, shuffle=False,
+zipped_input = []
+for i in range(len(list_graphs)):
+    if len(list_graphs[i].edges['ent2ent_rel'].data['rel_type']) != 0 and list_span_idx[i] != (-1,-1):
+        zipped_input.append((list_graphs[i],
+                             tensor_input_ids[i],
+                             tensor_attention_masks[i],
+                             tensor_token_type_ids[i],
+                             list_span_idx[i]))
+
+# %%
+train_batch_size = 2
+#zipped_input = list(zip(list_graphs, tensor_input_ids, tensor_attention_masks, tensor_token_type_ids, list_span_idx))
+data_loader = DataLoader(zipped_input, batch_size=train_batch_size, shuffle=False,
                          collate_fn=collate)
 
 # %%
@@ -977,7 +988,7 @@ epochs = 1
 
 # Total number of training steps is [number of batches] x [number of epochs]. 
 # (Note that this is not the same as the number of training samples).
-total_steps = len(train_dataloader) * epochs
+total_steps = len(data_loader) * epochs
 
 #Create the learning rate scheduler.
 scheduler = get_linear_schedule_with_warmup(optimizer, 
@@ -1003,7 +1014,7 @@ neptune_token = "eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vdWkubmVwdHVuZS5haSIsImFwaV91cmw
 # %%
 
 
-train_batch_size = 1
+
 
 
 # %%
@@ -1022,7 +1033,7 @@ PARAMS = {"num_epoch": epochs,
           #'validation_size': len(validation_dataloader)*val_batch_size , 
           'random_seed': random_seed,
           'total_steps': total_steps, 
-          'training_size': len(train_dataloader)*train_batch_size, 
+          'training_size': len(data_loader)*train_batch_size, 
           'train_batch_size': train_batch_size,
           #'val_batch_size': val_batch_size, 
           'scheduler': 'get_linear_schedule_with_warmup'}
@@ -1324,17 +1335,11 @@ class Validation():
 
 
 # %%
-dev_list_graphs[0]
-
-# %%
-validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
-                        dev_tensor_input_ids, dev_tensor_attention_masks, 
-                        dev_tensor_token_type_ids,
-                        dev_list_span_idx)
-metrics = validation.do_validation()
-
-# %%
-metrics
+# validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
+#                         dev_tensor_input_ids, dev_tensor_attention_masks, 
+#                         dev_tensor_token_type_ids,
+#                         dev_list_span_idx)
+# metrics = validation.do_validation()
 
 # %%
 import os
@@ -1361,7 +1366,7 @@ model_path = '/workspace/ml-workspace/thesis_git/HSGN/models'
 best_eval_f1 = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="batch size 2", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
+with neptune.create_experiment(name="batch size 2 vs. 397", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
     neptune.append_tag(["yes_no span", "bigru initial emb", "bottom-up", "ent relation", "no SRL rel", "Query node", "multihop edges", "residual", "w_yn"])
     neptune.set_property('server', 'IRGPU2')
     neptune.set_property('training_set_path', training_path)
@@ -1501,6 +1506,6 @@ with neptune.create_experiment(name="batch size 2", params=PARAMS, upload_source
 
     print("Total training took {:} (h:mm:ss)".format(format_time(time.time()-total_t0)))
     # create a zip file for the folder of the model
-    zipdir(model_path, os.path.join(model_path, 'checkpoint.zip'))
-    # upload the model to neptune
-    neptune.send_artifact(os.path.join(model_path, 'checkpoint.zip'))
+#     zipdir(model_path, os.path.join(model_path, 'checkpoint.zip'))
+#     # upload the model to neptune
+#     neptune.send_artifact(os.path.join(model_path, 'checkpoint.zip'))
