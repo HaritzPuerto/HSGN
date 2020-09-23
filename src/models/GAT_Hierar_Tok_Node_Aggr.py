@@ -43,8 +43,30 @@ hotpot_qa_path = os.path.join(data_path, "external")
 
 with open(os.path.join(hotpot_qa_path, "hotpot_train_v1.1.json"), "r") as f:
     hotpot_train = json.load(f)
+
 with open(os.path.join(hotpot_qa_path, "hotpot_dev_distractor_v1.json"), "r") as f:
     hotpot_dev = json.load(f)
+
+# %%
+set_easy = set()
+set_med = set()
+set_hard = set()
+for ins_idx, ins in enumerate(hotpot_train):
+    if ins['level'] == 'easy':
+        set_easy.add(ins_idx)
+    elif ins['level'] == 'medium':
+        set_med.add(ins_idx)
+    elif ins['level'] == 'hard':
+        set_hard.add(ins_idx)
+
+list_idx_curriculum_learning = []
+for idx in set_easy:
+    list_idx_curriculum_learning.append(idx)
+for idx in set_med:
+    list_idx_curriculum_learning.append(idx)
+for idx in set_hard:
+    list_idx_curriculum_learning.append(idx)
+
 
 # %%
 device = 'cuda'
@@ -56,8 +78,8 @@ pretrained_weights = 'bert-base-cased'
 # ## Processing
 
 # %%
-training_path = os.path.join(data_path, "processed/training/heterog_20200910_query_edges/")
-dev_path = os.path.join(data_path, "processed/dev/heterog_20200910_query_edges/")
+training_path = os.path.join(data_path, "processed/training/heterog_20200920_query_edges/")
+dev_path = os.path.join(data_path, "processed/dev/heterog_20200920_query_edges/")
 
 with open(os.path.join(training_path, 'list_span_idx.p'), 'rb') as f:
     list_span_idx = pickle.load(f)
@@ -1323,7 +1345,7 @@ model_path = '/workspace/ml-workspace/thesis_git/HSGN/models'
 best_eval_f1 = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="40K query edges grad acc", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
+with neptune.create_experiment(name="curriculum learning vs. 397", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
     neptune.append_tag(["yes_no span", "bigru initial emb", "bottom-up", "ent relation", "no SRL rel", "Query node", "multihop edges", "residual", "w_yn"])
     neptune.set_property('server', 'IRGPU11')
     neptune.set_property('training_set_path', training_path)
@@ -1349,14 +1371,34 @@ with neptune.create_experiment(name="40K query edges grad acc", params=PARAMS, u
         model.train()
 
         # For each batch of training data...
-        for step, b_graph in enumerate(tqdm(list_graphs)):
-            neptune.log_metric('step', step)  
+        #for step, b_graph in enumerate(tqdm(list_graphs)):
+        for step, idx in enumerate(tqdm(list_idx_curriculum_learning)):
+            b_graph = list_graphs[idx]    
+            if step % 10000 == 0 and step != 0:
+                #############################
+                ######### Validation ########
+                #############################
+                validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
+                                        dev_tensor_input_ids, dev_tensor_attention_masks, 
+                                        dev_tensor_token_type_ids,
+                                        dev_list_span_idx)
+                metrics = validation.do_validation()
+                model.train()
+                record_eval_metric(neptune, metrics)
+
+                curr_f1 = metrics['joint_f1']
+                if  curr_f1 > best_eval_f1:
+                    best_eval_f1 = curr_f1
+                    model.save_pretrained(model_path) 
+                    
+            neptune.log_metric('step', step)
+            model.zero_grad()  
             # forward
-            input_ids=tensor_input_ids[step].unsqueeze(0).to(device)
-            attention_mask=tensor_attention_masks[step].unsqueeze(0).to(device)
-            token_type_ids=tensor_token_type_ids[step].unsqueeze(0).to(device) 
-            start_positions=torch.tensor([list_span_idx[step][0]], device='cuda')
-            end_positions=torch.tensor([list_span_idx[step][1]], device='cuda')
+            input_ids=tensor_input_ids[idx].unsqueeze(0).to(device)
+            attention_mask=tensor_attention_masks[idx].unsqueeze(0).to(device)
+            token_type_ids=tensor_token_type_ids[idx].unsqueeze(0).to(device) 
+            start_positions=torch.tensor([list_span_idx[idx][0]], device='cuda')
+            end_positions=torch.tensor([list_span_idx[idx][1]], device='cuda')
             output = model(b_graph,
                            input_ids=input_ids,
                            attention_mask=attention_mask,
