@@ -499,7 +499,7 @@ if 'large' in pretrained_weights:
 dict_params = {'in_feats': bert_dim, 'out_feats': bert_dim, 'feat_drop': 0.1, 'attn_drop': 0.1, 'residual': True, 'hidden_size_classifier': 768,
                'weight_sent_loss': 1, 'weight_srl_loss': 1, 'weight_ent_loss': 1,
                'weight_span_loss': 2, 'weight_ans_type_loss': 1, 
-               'gat_layers': 2, 'etypes': graph.etypes}
+               'gat_layers': 2, 'etypes': graph.etypes, 'accumulation_steps': 2}
 class HGNModel(BertPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
@@ -1323,9 +1323,9 @@ model_path = '/workspace/ml-workspace/thesis_git/HSGN/models'
 best_eval_f1 = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="40K query edges inverse htok layer gru", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
+with neptune.create_experiment(name="40K query edges grad acc", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
     neptune.append_tag(["yes_no span", "bigru initial emb", "bottom-up", "ent relation", "no SRL rel", "Query node", "multihop edges", "residual", "w_yn"])
-    neptune.set_property('server', 'IRGPU2')
+    neptune.set_property('server', 'IRGPU11')
     neptune.set_property('training_set_path', training_path)
     neptune.set_property('dev_set_path', dev_path)
 
@@ -1350,26 +1350,7 @@ with neptune.create_experiment(name="40K query edges inverse htok layer gru", pa
 
         # For each batch of training data...
         for step, b_graph in enumerate(tqdm(list_graphs)):
-            
-            if step % 10000 == 0 and step != 0:
-                #############################
-                ######### Validation ########
-                #############################
-                validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
-                                        dev_tensor_input_ids, dev_tensor_attention_masks, 
-                                        dev_tensor_token_type_ids,
-                                        dev_list_span_idx)
-                metrics = validation.do_validation()
-                model.train()
-                record_eval_metric(neptune, metrics)
-
-                curr_f1 = metrics['joint_f1']
-                if  curr_f1 > best_eval_f1:
-                    best_eval_f1 = curr_f1
-                    model.save_pretrained(model_path) 
-                    
-            neptune.log_metric('step', step)
-            model.zero_grad()  
+            neptune.log_metric('step', step)  
             # forward
             input_ids=tensor_input_ids[step].unsqueeze(0).to(device)
             attention_mask=tensor_attention_masks[step].unsqueeze(0).to(device)
@@ -1383,7 +1364,7 @@ with neptune.create_experiment(name="40K query edges inverse htok layer gru", pa
                            start_positions=start_positions,
                            end_positions=end_positions)
             
-            total_loss = output['loss']
+            total_loss = output['loss'] / dict_params['accumulation_steps']
             assert not torch.isnan(total_loss)
             sent_loss = output['sent']['loss']
             ent_loss = output['ent']['loss']
@@ -1405,9 +1386,28 @@ with neptune.create_experiment(name="40K query edges inverse htok layer gru", pa
 
             # backpropagation
             total_loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            optimizer.step()
-            scheduler.step()
+            if (step + 1) % dict_params['accumulation_steps'] == 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                optimizer.step()
+                scheduler.step()
+                model.zero_grad()
+                
+                if (step +1) % 10000 == 0:
+                    #############################
+                    ######### Validation ########
+                    #############################
+                    validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
+                                            dev_tensor_input_ids, dev_tensor_attention_masks, 
+                                            dev_tensor_token_type_ids,
+                                            dev_list_span_idx)
+                    metrics = validation.do_validation()
+                    model.train()
+                    record_eval_metric(neptune, metrics)
+
+                    curr_f1 = metrics['joint_f1']
+                    if  curr_f1 > best_eval_f1:
+                        best_eval_f1 = curr_f1
+                        model.save_pretrained(model_path) 
             total_train_loss += total_loss.detach().item()
 
             # free-up gpu memory
@@ -1459,6 +1459,6 @@ with neptune.create_experiment(name="40K query edges inverse htok layer gru", pa
 
     print("Total training took {:} (h:mm:ss)".format(format_time(time.time()-total_t0)))
     # create a zip file for the folder of the model
-    zipdir(model_path, os.path.join(model_path, 'checkpoint.zip'))
-    # upload the model to neptune
-    neptune.send_artifact(os.path.join(model_path, 'checkpoint.zip'))
+#     zipdir(model_path, os.path.join(model_path, 'checkpoint.zip'))
+#     # upload the model to neptune
+#     neptune.send_artifact(os.path.join(model_path, 'checkpoint.zip'))
