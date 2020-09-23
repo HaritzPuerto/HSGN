@@ -38,7 +38,7 @@ torch.manual_seed(random_seed)
 torch.cuda.manual_seed_all(random_seed)
 
 # %%
-data_path = "/workspace/ml-workspace/thesis_git/HSGN/data/"
+data_path = "data/"
 hotpot_qa_path = os.path.join(data_path, "external")
 
 with open(os.path.join(hotpot_qa_path, "hotpot_train_v1.1.json"), "r") as f:
@@ -70,16 +70,16 @@ for idx in set_hard:
 
 # %%
 device = 'cuda'
-pretrained_weights = 'bert-base-cased'
-#pretrained_weights = 'bert-large-cased-whole-word-masking'
+#pretrained_weights = 'bert-base-cased'
+pretrained_weights = 'bert-large-cased-whole-word-masking'
 
 # ## HotpotQA Processing
 
 # ## Processing
 
 # %%
-training_path = os.path.join(data_path, "processed/training/heterog_20200920_query_edges/")
-dev_path = os.path.join(data_path, "processed/dev/heterog_20200920_query_edges/")
+training_path = os.path.join(data_path, "processed/training/heterog_20200922_query_edges/")
+dev_path = os.path.join(data_path, "processed/dev/heterog_20200922_query_edges/")
 
 with open(os.path.join(training_path, 'list_span_idx.p'), 'rb') as f:
     list_span_idx = pickle.load(f)
@@ -960,7 +960,7 @@ optimizer = AdamW(model.parameters(),
 from transformers import get_linear_schedule_with_warmup, get_cosine_with_hard_restarts_schedule_with_warmup
 
 # Number of training epochs. The BERT authors recommend between 2 and 4. 
-epochs = 1
+epochs = 2
 
 # Total number of training steps is [number of batches] x [number of epochs]. 
 # (Note that this is not the same as the number of training samples).
@@ -1345,7 +1345,7 @@ model_path = '/workspace/ml-workspace/thesis_git/HSGN/models'
 best_eval_f1 = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="curriculum learning vs. 397", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
+with neptune.create_experiment(name="large curriculum learning", params=PARAMS, upload_source_files=['src/models/GAT_Hierar_Tok_Node_Aggr.py']):
     neptune.append_tag(["yes_no span", "bigru initial emb", "bottom-up", "ent relation", "no SRL rel", "Query node", "multihop edges", "residual", "w_yn"])
     neptune.set_property('server', 'IRGPU11')
     neptune.set_property('training_set_path', training_path)
@@ -1372,7 +1372,13 @@ with neptune.create_experiment(name="curriculum learning vs. 397", params=PARAMS
 
         # For each batch of training data...
         #for step, b_graph in enumerate(tqdm(list_graphs)):
-        for step, idx in enumerate(tqdm(list_idx_curriculum_learning)):
+        list_idx = []
+        if epoch_i == 0:
+            list_idx = list_idx_curriculum_learning
+        else:
+            list_idx = random.shuffle(list_idx_curriculum_learning)
+
+        for step, idx in enumerate(tqdm(list_idx)):
             b_graph = list_graphs[idx]    
             if step % 10000 == 0 and step != 0:
                 #############################
