@@ -499,7 +499,7 @@ if 'large' in pretrained_weights:
 dict_params = {'in_feats': bert_dim, 'out_feats': bert_dim, 'feat_drop': 0.1, 'attn_drop': 0.1, 'residual': True, 'hidden_size_classifier': 768,
                'weight_sent_loss': 1, 'weight_srl_loss': 1, 'weight_ent_loss': 1,
                'weight_span_loss': 2, 'weight_ans_type_loss': 1, 
-               'gat_layers': 2, 'etypes': graph.etypes}
+               'gat_layers': 2, 'etypes': graph.etypes, 'num_cycles': 2}
 class HGNModel(BertPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
@@ -952,9 +952,10 @@ scheduler = get_linear_schedule_with_warmup(optimizer,
 # scheduler_medium = get_linear_schedule_with_warmup(optimizer, 
 #                                             num_warmup_steps = 0, # Default value in run_glue.py
 #                                             num_training_steps = len(train_dataloader_medium) * epochs)
-# scheduler = get_cosine_with_hard_restarts_schedule_with_warmup(optimizer, 
-#                                                                num_warmup_steps = 0, # Default value in run_glue.py
-#                                                                num_training_steps = total_steps)
+scheduler = get_cosine_with_hard_restarts_schedule_with_warmup(optimizer, 
+                                                               num_warmup_steps = 0, # Default value in run_glue.py
+                                                               num_training_steps = total_steps,
+                                                               num_cycles=dict_params['num_cycles'])
 
 
 # # Neptune Config
@@ -1323,7 +1324,7 @@ model_path = '/workspace/ml-workspace/thesis_git/HSGN/models'
 best_eval_f1 = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="40K query edges inverse htok layer gru", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
+with neptune.create_experiment(name="40K query edges cyclic lr vs 397", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
     neptune.append_tag(["yes_no span", "bigru initial emb", "bottom-up", "ent relation", "no SRL rel", "Query node", "multihop edges", "residual", "w_yn"])
     neptune.set_property('server', 'IRGPU2')
     neptune.set_property('training_set_path', training_path)
