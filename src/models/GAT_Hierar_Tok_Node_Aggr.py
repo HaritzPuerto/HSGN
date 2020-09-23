@@ -70,16 +70,16 @@ for idx in set_hard:
 
 # %%
 device = 'cuda'
-pretrained_weights = 'bert-base-cased'
-#pretrained_weights = 'bert-large-cased-whole-word-masking'
+#pretrained_weights = 'bert-base-cased'
+pretrained_weights = 'bert-large-cased-whole-word-masking'
 
 # ## HotpotQA Processing
 
 # ## Processing
 
 # %%
-training_path = os.path.join(data_path, "processed/training/heterog_20200920_query_edges/")
-dev_path = os.path.join(data_path, "processed/dev/heterog_20200920_query_edges/")
+training_path = os.path.join(data_path, "processed/training/heterog_20200922_query_edges/")
+dev_path = os.path.join(data_path, "processed/dev/heterog_20200922_query_edges/")
 
 with open(os.path.join(training_path, 'list_span_idx.p'), 'rb') as f:
     list_span_idx = pickle.load(f)
@@ -521,7 +521,7 @@ if 'large' in pretrained_weights:
 dict_params = {'in_feats': bert_dim, 'out_feats': bert_dim, 'feat_drop': 0.1, 'attn_drop': 0.1, 'residual': True, 'hidden_size_classifier': 768,
                'weight_sent_loss': 1, 'weight_srl_loss': 1, 'weight_ent_loss': 1,
                'weight_span_loss': 2, 'weight_ans_type_loss': 1, 
-               'gat_layers': 2, 'etypes': graph.etypes, 'accumulation_steps': 2}
+               'gat_layers': 2, 'etypes': graph.etypes, 'accumulation_steps': 2, 'num_cycles': 2}
 class HGNModel(BertPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
@@ -974,9 +974,10 @@ scheduler = get_linear_schedule_with_warmup(optimizer,
 # scheduler_medium = get_linear_schedule_with_warmup(optimizer, 
 #                                             num_warmup_steps = 0, # Default value in run_glue.py
 #                                             num_training_steps = len(train_dataloader_medium) * epochs)
-# scheduler = get_cosine_with_hard_restarts_schedule_with_warmup(optimizer, 
-#                                                                num_warmup_steps = 0, # Default value in run_glue.py
-#                                                                num_training_steps = total_steps)
+scheduler = get_cosine_with_hard_restarts_schedule_with_warmup(optimizer, 
+                                                               num_warmup_steps = 0, # Default value in run_glue.py
+                                                               num_training_steps = total_steps,
+                                                               num_cycles=dict_params['num_cycles'])
 
 
 # # Neptune Config
@@ -1345,7 +1346,7 @@ model_path = '/workspace/ml-workspace/thesis_git/HSGN/models'
 best_eval_f1 = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="curriculum learning vs. 397", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
+with neptune.create_experiment(name="regularization large", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
     neptune.append_tag(["yes_no span", "bigru initial emb", "bottom-up", "ent relation", "no SRL rel", "Query node", "multihop edges", "residual", "w_yn"])
     neptune.set_property('server', 'IRGPU11')
     neptune.set_property('training_set_path', training_path)
