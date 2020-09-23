@@ -36,6 +36,7 @@ random.seed(random_seed)
 np.random.seed(random_seed)
 torch.manual_seed(random_seed)
 torch.cuda.manual_seed_all(random_seed)
+torch.backends.cudnn.deterministic = True
 
 # %%
 data_path = "/workspace/ml-workspace/thesis_git/HSGN/data/"
@@ -244,6 +245,18 @@ class LabelSmoothingLoss(nn.Module):
 # %%
 loss_fn = LabelSmoothingLoss()
 
+# %%
+class NodeNorm(nn.Module):
+    def __init__(self, unbiased=False, eps=1e-5):
+        super(NodeNorm, self).__init__()
+        self.unbiased = unbiased
+        self.eps = eps
+
+    def forward(self, x):
+        mean = torch.mean(x, dim=1, keepdim=True)
+        std = (torch.var(x, unbiased=self.unbiased, dim=1, keepdim=True) + self.eps).sqrt()
+        x = (x - mean) / std
+        return x
 
 # %%
 class GAT(nn.Module):
@@ -481,6 +494,7 @@ class HeteroRGCN(nn.Module):
     def __init__(self, etypes, in_size, hidden_size, out_size, feat_drop, attn_drop, residual):
         super(HeteroRGCN, self).__init__()
         self.in_size = in_size
+        self.node_norm = NodeNorm()
         self.layer1 = HeteroRGCNLayer(in_size, hidden_size, etypes, feat_drop, attn_drop, residual)
         self.layer2 = HeteroRGCNLayer(hidden_size, out_size, etypes, feat_drop, attn_drop, residual)
         self.gru_layer_lvl = nn.GRU(in_size, out_size)
@@ -488,15 +502,15 @@ class HeteroRGCN(nn.Module):
         self.init_params()
         
     def forward(self, G, emb, bert_token_emb):
-        h_tok0 = emb['tok'].view(1,-1,self.in_size)
+        h_tok0 = emb['tok'].view(1,-1,self.in_size) # it's already normalized
         
         h_dict = self.layer1(G, emb, bert_token_emb)
-        h_tok1 = h_dict['tok'].view(1,-1,self.in_size)
-        h_dict = {k : F.leaky_relu(h) for k, h in h_dict.items()}
+        h_tok1 = self.node_norm(h_dict['tok'].view(1,-1,self.in_size))
+        h_dict = {k : F.leaky_relu(self.node_norm(h)) for k, h in h_dict.items()}
         
         h_dict = self.layer2(G, h_dict, bert_token_emb)
-        h_tok2 = h_dict['tok'].view(1,-1,self.in_size)
-        
+        h_tok2 = self.node_norm(h_dict['tok'].view(1,-1,self.in_size))
+        h_dict = {k : F.leaky_relu(self.node_norm(h)) for k, h in h_dict.items()}
         # tok2, tok1, tok0 is the sequence input into the gru
         # intuition: add the new knowledge from the graph in the original token emb
         # origianl tok emb do not contain graph info, so they can be more suitable for span pred
@@ -536,6 +550,7 @@ class HGNModel(BertPreTrainedModel):
         self.bigru = nn.GRU(dict_params['in_feats'], dict_params['in_feats'], 
                                     dropout = dict_params['feat_drop'], bidirectional=True)
         self.gru_aggregation = nn.Linear(2*dict_params['in_feats'], dict_params['in_feats'])
+        self.node_norm = NodeNorm()
         # Graph Neural Network
         self.rgcn = HeteroRGCN(dict_params['etypes'], dict_params['in_feats'], dict_params['in_feats'],
                                dict_params['in_feats'], dict_params['feat_drop'], dict_params['attn_drop'], 
@@ -797,7 +812,7 @@ class HGNModel(BertPreTrainedModel):
                 concat_both_dir = torch.cat((left2right, right2left), dim=1)
                 list_emb.append(concat_both_dir.squeeze(0))
             list_emb = torch.stack(list_emb, dim=0)
-            graph_emb[ntype] = self.gru_aggregation(list_emb)
+            graph_emb[ntype] = self.node_norm(self.gru_aggregation(list_emb))
         return graph_emb
     
     def aggregate_emb(self, encoder_output):      
