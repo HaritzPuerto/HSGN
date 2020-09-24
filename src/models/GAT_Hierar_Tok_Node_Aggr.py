@@ -79,8 +79,8 @@ pretrained_weights = 'bert-base-cased'
 # ## Processing
 
 # %%
-training_path = os.path.join(data_path, "processed/training/heterog_20200920_query_edges/")
-dev_path = os.path.join(data_path, "processed/dev/heterog_20200920_query_edges/")
+training_path = os.path.join(data_path, "processed/training/heterog_20200922_query_edges/")
+dev_path = os.path.join(data_path, "processed/dev/heterog_20200922_query_edges/")
 
 with open(os.path.join(training_path, 'list_span_idx.p'), 'rb') as f:
     list_span_idx = pickle.load(f)
@@ -521,11 +521,7 @@ if 'large' in pretrained_weights:
 dict_params = {'in_feats': bert_dim, 'out_feats': bert_dim, 'feat_drop': 0.1, 'attn_drop': 0.1, 'residual': True, 'hidden_size_classifier': 768,
                'weight_sent_loss': 1, 'weight_srl_loss': 1, 'weight_ent_loss': 1,
                'weight_span_loss': 2, 'weight_ans_type_loss': 1, 
-<<<<<<< HEAD
-               'gat_layers': 2, 'etypes': graph.etypes, 'accumulation_steps': 2}
-=======
-               'gat_layers': 2, 'etypes': graph.etypes, 'num_cycles': 2}
->>>>>>> origin/cyclic_lr
+               'gat_layers': 2, 'etypes': graph.etypes, 'accumulation_steps': 2, 'num_cycles': 2}
 class HGNModel(BertPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
