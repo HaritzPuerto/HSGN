@@ -521,7 +521,11 @@ if 'large' in pretrained_weights:
 dict_params = {'in_feats': bert_dim, 'out_feats': bert_dim, 'feat_drop': 0.1, 'attn_drop': 0.1, 'residual': True, 'hidden_size_classifier': 768,
                'weight_sent_loss': 1, 'weight_srl_loss': 1, 'weight_ent_loss': 1,
                'weight_span_loss': 2, 'weight_ans_type_loss': 1, 
+<<<<<<< HEAD
                'gat_layers': 2, 'etypes': graph.etypes, 'accumulation_steps': 2}
+=======
+               'gat_layers': 2, 'etypes': graph.etypes, 'num_cycles': 2}
+>>>>>>> origin/cyclic_lr
 class HGNModel(BertPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
@@ -968,16 +972,17 @@ epochs = 2
 total_steps = len(train_dataloader) * epochs
 
 #Create the learning rate scheduler.
-scheduler = get_linear_schedule_with_warmup(optimizer, 
-                                             num_warmup_steps = 0, # Default value in run_glue.py
-                                             num_training_steps = total_steps)
+# scheduler = get_linear_schedule_with_warmup(optimizer, 
+#                                              num_warmup_steps = 0, # Default value in run_glue.py
+#                                              num_training_steps = total_steps)
 
 # scheduler_medium = get_linear_schedule_with_warmup(optimizer, 
 #                                             num_warmup_steps = 0, # Default value in run_glue.py
 #                                             num_training_steps = len(train_dataloader_medium) * epochs)
-# scheduler = get_cosine_with_hard_restarts_schedule_with_warmup(optimizer, 
-#                                                                num_warmup_steps = 0, # Default value in run_glue.py
-#                                                                num_training_steps = total_steps)
+scheduler = get_cosine_with_hard_restarts_schedule_with_warmup(optimizer, 
+                                                               num_warmup_steps = 1000, # Default value in run_glue.py
+                                                               num_training_steps = total_steps,
+                                                               num_cycles=dict_params['num_cycles'])
 
 
 # # Neptune Config
@@ -1346,7 +1351,7 @@ model_path = '/workspace/ml-workspace/thesis_git/HSGN/models'
 best_eval_f1 = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="40K query edges grad acc", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
+with neptune.create_experiment(name="Regularization large 2 epochs", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
     neptune.append_tag(["yes_no span", "bigru initial emb", "bottom-up", "ent relation", "no SRL rel", "Query node", "multihop edges", "residual", "w_yn"])
     neptune.set_property('server', 'IRGPU11')
     neptune.set_property('training_set_path', training_path)
@@ -1486,12 +1491,6 @@ with neptune.create_experiment(name="40K query edges grad acc", params=PARAMS, u
 
     print("Total training took {:} (h:mm:ss)".format(format_time(time.time()-total_t0)))
     # create a zip file for the folder of the model
-<<<<<<< HEAD
 #     zipdir(model_path, os.path.join(model_path, 'checkpoint.zip'))
 #     # upload the model to neptune
 #     neptune.send_artifact(os.path.join(model_path, 'checkpoint.zip'))
-=======
-    # zipdir(model_path, os.path.join(model_path, 'checkpoint.zip'))
-    # # upload the model to neptune
-    # neptune.send_artifact(os.path.join(model_path, 'checkpoint.zip'))
->>>>>>> curriculum_learning
