@@ -44,8 +44,30 @@ hotpot_qa_path = os.path.join(data_path, "external")
 
 with open(os.path.join(hotpot_qa_path, "hotpot_train_v1.1.json"), "r") as f:
     hotpot_train = json.load(f)
+
 with open(os.path.join(hotpot_qa_path, "hotpot_dev_distractor_v1.json"), "r") as f:
     hotpot_dev = json.load(f)
+
+# %%
+set_easy = set()
+set_med = set()
+set_hard = set()
+for ins_idx, ins in enumerate(hotpot_train):
+    if ins['level'] == 'easy':
+        set_easy.add(ins_idx)
+    elif ins['level'] == 'medium':
+        set_med.add(ins_idx)
+    elif ins['level'] == 'hard':
+        set_hard.add(ins_idx)
+
+list_idx_curriculum_learning = []
+for idx in set_easy:
+    list_idx_curriculum_learning.append(idx)
+for idx in set_med:
+    list_idx_curriculum_learning.append(idx)
+for idx in set_hard:
+    list_idx_curriculum_learning.append(idx)
+
 
 # %%
 device = 'cuda'
@@ -57,8 +79,8 @@ pretrained_weights = 'bert-base-cased'
 # ## Processing
 
 # %%
-training_path = os.path.join(data_path, "processed/training/heterog_20200910_query_edges/")
-dev_path = os.path.join(data_path, "processed/dev/heterog_20200910_query_edges/")
+training_path = os.path.join(data_path, "processed/training/heterog_20200920_query_edges/")
+dev_path = os.path.join(data_path, "processed/dev/heterog_20200920_query_edges/")
 
 with open(os.path.join(training_path, 'list_span_idx.p'), 'rb') as f:
     list_span_idx = pickle.load(f)
@@ -357,7 +379,7 @@ class HeteroRGCNLayer(nn.Module):
         h = torch.sum(nodes.mailbox['m'], dim=1)
         return {'h_srl': h}
     
-    def reduce_func_srl2tok(self, nodes):
+    def reduce_func_ent2tok(self, nodes):
         h = torch.sum(nodes.mailbox['m'], dim=1)
         return {'h_ent': h}
     
@@ -373,22 +395,8 @@ class HeteroRGCNLayer(nn.Module):
                             updt_dst],
                            dim=1)
         e = F.leaky_relu(self.node_att(cat_uv))
-        return {'m': updt_src, 'e': e,}
-    
-    def message_func_AT_node(self, edges):
-        '''
-        e_ij = alpha_ij * W * h_j
-        alpha_ij = LeakyReLU(W * (Wh_j || Wh_i))
-        '''
-        src = edges.src['h']
-        updt_dst = self.at_trans(edges.dst['h'])
-        updt_src = self.at_trans(src)
-        cat_uv = torch.cat([updt_src,
-                            updt_dst],
-                           dim=1)
-        e = F.leaky_relu(self.at_att(cat_uv))
-        return {'m': updt_src, 'e': e,}    
-    
+        return {'m': updt_src, 'e': e}
+
     def forward(self, G, feat_dict, bert_token_emb):
         # The input is a dictionary of node features for each type
         funcs = {}
@@ -953,7 +961,7 @@ optimizer = AdamW(model.parameters(),
 from transformers import get_linear_schedule_with_warmup, get_cosine_with_hard_restarts_schedule_with_warmup
 
 # Number of training epochs. The BERT authors recommend between 2 and 4. 
-epochs = 1
+epochs = 2
 
 # Total number of training steps is [number of batches] x [number of epochs]. 
 # (Note that this is not the same as the number of training samples).
@@ -1362,16 +1370,20 @@ with neptune.create_experiment(name="40K query edges grad acc", params=PARAMS, u
         # Reset the total loss for this epoch.
         total_train_loss = 0
         model.train()
-
+        # in the first epoch we use curriculum learning
+        # in the second epoch we random the input to avoid biases (modifying the weights only for easy questions for a long time)
+        if epoch_i > 0:
+            random.shuffle(list_idx_curriculum_learning)
         # For each batch of training data...
-        for step, b_graph in enumerate(tqdm(list_graphs)):
-            neptune.log_metric('step', step)  
+        for step, idx in enumerate(tqdm(list_idx_curriculum_learning)):
+            b_graph = list_graphs[idx]
+            neptune.log_metric('step', step)
             # forward
-            input_ids=tensor_input_ids[step].unsqueeze(0).to(device)
-            attention_mask=tensor_attention_masks[step].unsqueeze(0).to(device)
-            token_type_ids=tensor_token_type_ids[step].unsqueeze(0).to(device) 
-            start_positions=torch.tensor([list_span_idx[step][0]], device='cuda')
-            end_positions=torch.tensor([list_span_idx[step][1]], device='cuda')
+            input_ids=tensor_input_ids[idx].unsqueeze(0).to(device)
+            attention_mask=tensor_attention_masks[idx].unsqueeze(0).to(device)
+            token_type_ids=tensor_token_type_ids[idx].unsqueeze(0).to(device) 
+            start_positions=torch.tensor([list_span_idx[idx][0]], device='cuda')
+            end_positions=torch.tensor([list_span_idx[idx][1]], device='cuda')
             output = model(b_graph,
                            input_ids=input_ids,
                            attention_mask=attention_mask,
@@ -1474,6 +1486,12 @@ with neptune.create_experiment(name="40K query edges grad acc", params=PARAMS, u
 
     print("Total training took {:} (h:mm:ss)".format(format_time(time.time()-total_t0)))
     # create a zip file for the folder of the model
+<<<<<<< HEAD
 #     zipdir(model_path, os.path.join(model_path, 'checkpoint.zip'))
 #     # upload the model to neptune
 #     neptune.send_artifact(os.path.join(model_path, 'checkpoint.zip'))
+=======
+    # zipdir(model_path, os.path.join(model_path, 'checkpoint.zip'))
+    # # upload the model to neptune
+    # neptune.send_artifact(os.path.join(model_path, 'checkpoint.zip'))
+>>>>>>> curriculum_learning
