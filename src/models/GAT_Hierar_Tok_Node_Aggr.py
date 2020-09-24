@@ -285,6 +285,7 @@ class HeteroRGCNLayer(nn.Module):
 
         self.common_space_trans = nn.Linear(in_size, out_size)
         
+        self.node2tok_trans = nn.Linear(in_size, out_size)
         self.gru_node2tok = nn.GRU(in_size, out_size)
         
         self.feat_drop = nn.Dropout(feat_drop)
@@ -337,7 +338,7 @@ class HeteroRGCNLayer(nn.Module):
         '''
         src = edges.src['h'].view(1,-1,self.in_size)
         tok = edges.dst['h'].view(1,-1,self.in_size) # the token node
-        m = self.gru_node2tok(src, tok)[0].squeeze(0)
+        m = F.leaky_relu(self.node2tok_trans(edges.src['h']))
         return {'m': m}
     
     def reduce_func_srl2tok(self, nodes):
@@ -400,13 +401,17 @@ class HeteroRGCNLayer(nn.Module):
                 funcs[etype] = (self.message_func_AT_node, self.reduce_func)
             else:
                 funcs[etype] = (self.message_func_regular_node, self.reduce_func)
-        G.multi_update_all(funcs, 'sum')
+        
         ## update tokens
         G['srl2tok'].update_all(self.message_func_2tok, fn.sum('m', 'h_srl'))
         if 'ent' in G.ntypes:
             G['ent2tok'].update_all(self.message_func_2tok, fn.sum('m', 'h_ent'))
+        # update the rest of the graph
+        G.multi_update_all(funcs, 'sum')
         #batched all tokens since we want to put into the GRU (srl, ent, hidden=tok) so batch size = 512
-        h_tok = G.nodes['tok'].data['h'].view(1,-1,self.in_size)
+        h_tok = G.nodes['tok'].data['h']
+        h_tok = F.leaky_relu(self.node2tok_trans(h_tok))
+        h_tok = h_tok.view(1,-1,self.in_size)
         h_srl = G.nodes['tok'].data.pop('h_srl').view(1,-1,self.in_size)
         gru_input = h_srl
         if 'h_ent' in G.nodes['tok'].data:
@@ -1320,10 +1325,10 @@ def record_eval_metric(neptune, metrics):
 # %%
 model_path = '/workspace/ml-workspace/thesis_git/HSGN/models'
 
-best_eval_f1 = 0
+best_eval_em = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="40K query edges inverse htok layer gru", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
+with neptune.create_experiment(name="fix node2tok vs. 397", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
     neptune.append_tag(["yes_no span", "bigru initial emb", "bottom-up", "ent relation", "no SRL rel", "Query node", "multihop edges", "residual", "w_yn"])
     neptune.set_property('server', 'IRGPU2')
     neptune.set_property('training_set_path', training_path)
@@ -1363,9 +1368,9 @@ with neptune.create_experiment(name="40K query edges inverse htok layer gru", pa
                 model.train()
                 record_eval_metric(neptune, metrics)
 
-                curr_f1 = metrics['joint_f1']
-                if  curr_f1 > best_eval_f1:
-                    best_eval_f1 = curr_f1
+                curr_em = metrics['ans_em']
+                if  curr_em > best_eval_em:
+                    best_eval_em = curr_em
                     model.save_pretrained(model_path) 
                     
             neptune.log_metric('step', step)
@@ -1438,9 +1443,9 @@ with neptune.create_experiment(name="40K query edges inverse htok layer gru", pa
         model.train()
         record_eval_metric(neptune, metrics)
 
-        curr_f1 = metrics['joint_f1']
-        if  curr_f1 > best_eval_f1:
-            best_eval_f1 = curr_f1
+        curr_em = metrics['ans_em']
+        if  curr_em > best_eval_em:
+            best_eval_em = curr_em
             model.save_pretrained(model_path) 
 
     # Calculate the average loss over all of the batches.
@@ -1459,6 +1464,6 @@ with neptune.create_experiment(name="40K query edges inverse htok layer gru", pa
 
     print("Total training took {:} (h:mm:ss)".format(format_time(time.time()-total_t0)))
     # create a zip file for the folder of the model
-    zipdir(model_path, os.path.join(model_path, 'checkpoint.zip'))
-    # upload the model to neptune
-    neptune.send_artifact(os.path.join(model_path, 'checkpoint.zip'))
+    # zipdir(model_path, os.path.join(model_path, 'checkpoint.zip'))
+    # # upload the model to neptune
+    # neptune.send_artifact(os.path.join(model_path, 'checkpoint.zip'))
