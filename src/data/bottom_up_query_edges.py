@@ -286,6 +286,7 @@ class Dataset():
         list_tok2ent = []
         ## same level
         list_sent2sent = []
+        list_self_sent2sent = []
         list_srl2srl = []
         list_srl2self = []
         list_srl_tmp2srl = []
@@ -586,7 +587,7 @@ class Dataset():
                 #query -> sent # lbl: [QUERY2SENT_PRED]
                 list_query2sent_pred.extend(self.get_edges_common_preds(ins_idx, doc_idx, sent_idx))
             # sequentially connected sent nodes # lbl: [SENT2SENT] 
-            list_sent2sent.extend([(u, v) for u in list_sent_nodes for v in list_sent_nodes if u <= v])
+            list_sent2sent.extend([(u, v) for u in list_sent_nodes for v in list_sent_nodes if u < v])
         # self-edges to the docs
         list_doc2doc.extend([(u, u) for u in list_doc_nodes])  # lbl: [DOC2DOC_SELF]
 #         # fully connected doc nodes    
@@ -781,51 +782,54 @@ class Dataset():
             list_ent2at.append((ent, 0)) # lbl: [ENT2AT]
         at_label = ans_type(ans_str)
         # make the heterogenous graph
+        list_self_sent2sent = [(v,v) for v in range(sent_node_idx)]
         list_srl2self = [(v, v) for v in range(srl_node_idx)]
         # create ent rel using SRL predicates
         list_ent2ent_rel, list_ent2ent_metadata = self.compute_ent_relations(list_srl2srl, 
                                                                              list_srl2ent, 
                                                                              list_srl_rel)
         dict_edges = {
-                     ('sent', 'sent2doc', 'doc'): list_sent2doc,  # lbl: [SENT2DOC]
+                     #('sent', 'sent2doc', 'doc'): list_sent2doc,  # lbl: [SENT2DOC]
                      ('srl', 'srl2sent', 'sent'): list_srl2sent,  # lbl: [SRL2SENT]
                      # to token
                      ('srl', 'srl2tok', 'tok'): list_srl2tok,     # lbl: [SRL2TOK]
                      # end hierarchical
                      # same-level edges
-                     ('doc', 'doc2doc_self', 'doc'): list_doc2doc,         # lbl: [DOC2DOC_SELF]
+                     #('doc', 'self_doc2doc', 'doc'): list_doc2doc,         # lbl: [DOC2DOC_SELF]
                      ('sent', 'sent2sent', 'sent'): list_sent2sent,   # lbl: [SENT2SENT]
+                     ('sent', 'self_sent2sent', 'sent'): list_self_sent2sent, # lbl: [SENT2SENT_SELF]
                      ('srl', 'srl2srl', 'srl'): list_srl2srl,         # lbl: [SRL2SRL]
-                     ('srl', 'srl2self', 'srl'): list_srl2self,         # lbl: [SRL2SELF]
-                     ('tok', 'token2token_self', 'tok'): list_token2token, # lbl: [TOK2TOK_SELF]
+                     ('srl', 'self_srl2srl', 'srl'): list_srl2self,         # lbl: [SRL2SELF]
+                     ('tok', 'self_tok2tok', 'tok'): list_token2token, # lbl: [TOK2TOK_SELF]
                      # multi-hop edges
-                     ('srl', 'srl_multihop', 'srl'): list_srl_multihop,
-                     ('sent', 'sent_multihop', 'sent'): list_sent_multihop,
+                     ('srl', 'mh_srl2srl', 'srl'): list_srl_multihop,
+                     ('sent', 'mh_sent2sent', 'sent'): list_sent_multihop,
+                     ('query', 'self_query2query', 'query'): [(0,0)]
                     }
         if list_ent2srl != []:
             dict_edges[('ent', 'ent2srl', 'srl')] = list_ent2srl     # lbl: [ENT2SRL]
         if list_ent2tok != []:
             dict_edges[('ent', 'ent2tok', 'tok')] = list_ent2tok     # lbl: [ENT2TOK]
         if list_ent2ent_self != []:
-            dict_edges[('ent', 'ent2ent_self', 'ent')] = list_ent2ent_self # lbl: [ENT2ENT_SELF]
+            dict_edges[('ent', 'self_ent2ent', 'ent')] = list_ent2ent_self # lbl: [ENT2ENT_SELF]
         if list_ent2ent_rel != []:
-            dict_edges[('ent', 'ent2ent_rel', 'ent')] = list_ent2ent_rel  # lbl: [ENT2ENT_REL]
+            dict_edges[('ent', 'ent_rel2ent', 'ent')] = list_ent2ent_rel  # lbl: [ENT2ENT_REL]
         if list_ent_multihop != []:
-            dict_edges[('ent', 'ent_multihop', 'ent')] = list_ent_multihop # lbl: [ENT2ENT_MH]
+            dict_edges[('ent', 'mh_ent2ent', 'ent')] = list_ent_multihop # lbl: [ENT2ENT_MH]
         if list_srl_loc2srl != []:
             dict_edges[('srl_loc', 'srl_loc2srl', 'srl')] = list_srl_loc2srl  # lbl: [SRL_LOC2SRL]
         if list_srl_tmp2srl != []:
             dict_edges[('srl_tmp', 'srl_tmp2srl', 'srl')] = list_srl_tmp2srl  # lbl: [SRL_TMP2SRL]
         if list_sent2query_multihop != []:
-            dict_edges[('sent', 'sent2query_multihop', 'query')] = list_sent2query_multihop
+            dict_edges[('sent', 'mh_sent2query', 'query')] = list_sent2query_multihop
         if list_query2sent_multihop != []:
-            dict_edges[('query', 'query2sent_multihop', 'sent')] = list_query2sent_multihop
+            dict_edges[('query', 'mh_query2sent', 'sent')] = list_query2sent_multihop
         if list_srl2query != []:
             dict_edges[('srl', 'srl2query', 'query')] = list_srl2query
         if list_q_srl2srl != []:
             dict_edges[('srl', 'query_srl2srl', 'srl')] = list_q_srl2srl
         if list_query2sent_pred != []:
-            dict_edges['query', 'query2srl_pred', 'sent'] = list_query2sent_pred
+            dict_edges['query', 'query2sent', 'sent'] = list_query2sent_pred
         graph = dgl.heterograph(dict_edges)
         graph_metadata = dict()
         # doc metadata
@@ -1147,11 +1151,11 @@ for g_idx, list_dict_edge in enumerate(list_list_srl_edges_metadata):
     list_graphs[g_idx].edges['srl2srl'].data['span_idx'] = torch.tensor([edge['span_idx'] for edge in list_dict_edge])
 
 for g_idx, list_dict_edge in enumerate(list_list_ent2ent_metadata):
-    if 'ent2ent_rel' in list_graphs[g_idx].etypes:
-        list_graphs[g_idx].edges['ent2ent_rel'].data['rel_type'] = torch.tensor([edge['rel_type'] for edge in list_dict_edge])
-        list_graphs[g_idx].edges['ent2ent_rel'].data['span_idx'] = torch.tensor([edge['span_idx'] for edge in list_dict_edge])
+    if 'ent_rel2ent' in list_graphs[g_idx].etypes:
+        list_graphs[g_idx].edges['ent_rel2ent'].data['rel_type'] = torch.tensor([edge['rel_type'] for edge in list_dict_edge])
+        list_graphs[g_idx].edges['ent_rel2ent'].data['span_idx'] = torch.tensor([edge['span_idx'] for edge in list_dict_edge])
 # %%
-training_path = os.path.join(data_path, 'processed/training/heterog_20200910_query_edges')
+training_path = os.path.join(data_path, 'processed/training/heterog_20200924_hierarchical_node_aggr')
 training_graph_path = os.path.join(training_path, 'graphs')
 training_metadata_path = os.path.join(training_path, 'metadata')
 
@@ -1226,9 +1230,9 @@ for g_idx, list_dict_edge in enumerate(list_list_srl_edges_metadata):
 
 for g_idx, list_dict_edge in enumerate(list_list_ent2ent_metadata):
     list_etypes = [etype for (src, etype, dst) in list_graphs[g_idx].canonical_etypes]
-    if 'ent2ent_rel' in list_etypes:
-        list_graphs[g_idx].edges['ent2ent_rel'].data['rel_type'] = torch.tensor([edge['rel_type'] for edge in list_dict_edge])
-        list_graphs[g_idx].edges['ent2ent_rel'].data['span_idx'] = torch.tensor([edge['span_idx'] for edge in list_dict_edge])
+    if 'ent_rel2ent' in list_etypes:
+        list_graphs[g_idx].edges['ent_rel2ent'].data['rel_type'] = torch.tensor([edge['rel_type'] for edge in list_dict_edge])
+        list_graphs[g_idx].edges['ent_rel2ent'].data['span_idx'] = torch.tensor([edge['span_idx'] for edge in list_dict_edge])
 
 # %%
 list_input_ids = [context['input_ids'] for context in list_context]
@@ -1239,7 +1243,7 @@ tensor_token_type_ids = torch.tensor(list_token_type_ids)
 tensor_attention_masks = torch.tensor(list_attention_masks)
 
 # %%
-dev_path = os.path.join(data_path, 'processed/dev/heterog_20200910_query_edges')
+dev_path = os.path.join(data_path, 'processed/dev/heterog_20200924_hierarchical_node_aggr')
 dev_graph_path = os.path.join(dev_path, 'graphs')
 dev_metadata_path = os.path.join(dev_path, 'metadata')
 
