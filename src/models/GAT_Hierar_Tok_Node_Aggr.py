@@ -962,53 +962,22 @@ model.cuda()
 # 
 
 # %%
-torch.cuda.empty_cache()
+# for step, b_graph in enumerate(tqdm(list_graphs)):
+#     model.zero_grad()
+#     # forward
+#     input_ids=tensor_input_ids[step].unsqueeze(0).to(device)
+#     attention_mask=tensor_attention_masks[step].unsqueeze(0).to(device)
+#     token_type_ids=tensor_token_type_ids[step].unsqueeze(0).to(device) 
+#     start_positions=torch.tensor([list_span_idx[step][0]], device='cuda')
+#     end_positions=torch.tensor([list_span_idx[step][1]], device='cuda')
+#     output = model(b_graph,
+#                    input_ids=input_ids,
+#                    attention_mask=attention_mask,
+#                    token_type_ids=token_type_ids, 
+#                    start_positions=start_positions,
+#                    end_positions=end_positions)
+#     break
 
-# %%
-torch.cuda.memory_allocated() 
-
-# %%
-torch.cuda.max_memory_allocated()
-
-# %%
-for step, b_graph in enumerate(tqdm(list_graphs)):
-    model.zero_grad()
-    # forward
-    input_ids=tensor_input_ids[step].unsqueeze(0).to(device)
-    attention_mask=tensor_attention_masks[step].unsqueeze(0).to(device)
-    token_type_ids=tensor_token_type_ids[step].unsqueeze(0).to(device) 
-    start_positions=torch.tensor([list_span_idx[step][0]], device='cuda')
-    end_positions=torch.tensor([list_span_idx[step][1]], device='cuda')
-    output = model(b_graph,
-                   input_ids=input_ids,
-                   attention_mask=attention_mask,
-                   token_type_ids=token_type_ids, 
-                   start_positions=start_positions,
-                   end_positions=end_positions)
-    break
-
-# %%
-torch.cuda.max_memory_allocated()
-
-# %%
-torch.cuda.memory_allocated() 
-
-# %%
-import gc
-
-# %%
-for obj in gc.get_objects():
-    try:
-        if torch.is_tensor(obj) or (hasattr(obj, 'data') and torch.is_tensor(obj.data)):
-            print(type(obj), obj.size())
-    except:
-        pass
-
-# %%
-obj
-
-# %%
-train_dataloader = list_graphs
 
 # %%
 lr = 1e-5
@@ -1028,7 +997,7 @@ epochs = 1
 
 # Total number of training steps is [number of batches] x [number of epochs]. 
 # (Note that this is not the same as the number of training samples).
-total_steps = len(train_dataloader) * epochs
+total_steps = len(list_graphs) * epochs
 
 #Create the learning rate scheduler.
 scheduler = get_linear_schedule_with_warmup(optimizer, 
@@ -1073,7 +1042,7 @@ PARAMS = {"num_epoch": epochs,
           #'validation_size': len(validation_dataloader)*val_batch_size , 
           'random_seed': random_seed,
           'total_steps': total_steps, 
-          'training_size': len(train_dataloader)*train_batch_size, 
+          'training_size': len(list_graphs)*train_batch_size, 
           'train_batch_size': train_batch_size,
           #'val_batch_size': val_batch_size, 
           'scheduler': 'get_linear_schedule_with_warmup'}
@@ -1504,7 +1473,7 @@ with neptune.create_experiment(name="40K hierarchical node aggr", params=PARAMS,
             del end_positions
             
         # Calculate the average loss over all of the batches.
-        avg_train_loss = total_train_loss / len(train_dataloader)            
+        avg_train_loss = total_train_loss / len(list_graphs)            
         
         # Measure how long this epoch took.
         training_time = format_time(time.time() - t0)
@@ -1530,7 +1499,7 @@ with neptune.create_experiment(name="40K hierarchical node aggr", params=PARAMS,
             model.save_pretrained(model_path) 
 
     # Calculate the average loss over all of the batches.
-    avg_train_loss = total_train_loss / len(train_dataloader)            
+    avg_train_loss = total_train_loss / len(list_graphs)            
 
     # Measure how long this epoch took.
     training_time = format_time(time.time() - t0)
