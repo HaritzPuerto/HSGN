@@ -110,7 +110,7 @@ list_metadata_files = natural_sort([f for f in listdir(training_metadata_path) i
 list_graph_metadata_files = list(zip(list_graph_files, list_metadata_files))
 
 list_graphs = []
-for (g_file, metadata_file) in tqdm(list_graph_metadata_files[0:10]):
+for (g_file, metadata_file) in tqdm(list_graph_metadata_files):
     if ".bin" in g_file:
         with open(os.path.join(training_graphs_path, g_file), "rb") as f:
             graph = pickle.load(f)
@@ -417,7 +417,7 @@ class HeteroRGCNLayer(nn.Module):
         if 'mh_query' in graph.nodes['sent'].data:
             h_mh_query = graph.nodes['sent'].data.pop('mh_query').view(1,-1,self.in_size) # query and sentence share a entity
             gru_input = torch.cat((h_mh_query, gru_input), dim=0)
-        if 'mh_query' in graph.nodes['sent'].data:
+        if 'query' in graph.nodes['sent'].data:
             h_query = graph.nodes['sent'].data.pop('query').view(1,-1,self.in_size) # query is connected to each sentence to foster the sp prediction
             gru_input = torch.cat((h_query, gru_input), dim=0)
         # 0 to take the output and -1 to take the embedding of the sentence (last token)
