@@ -37,8 +37,11 @@ np.random.seed(random_seed)
 torch.manual_seed(random_seed)
 torch.cuda.manual_seed_all(random_seed)
 
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
+
 # %%
-data_path = "/workspace/ml-workspace/thesis_git/HSGN/data/"
+data_path = "data/"
 hotpot_qa_path = os.path.join(data_path, "external")
 
 with open(os.path.join(hotpot_qa_path, "hotpot_train_v1.1.json"), "r") as f:
@@ -110,7 +113,7 @@ list_metadata_files = natural_sort([f for f in listdir(training_metadata_path) i
 list_graph_metadata_files = list(zip(list_graph_files, list_metadata_files))
 
 list_graphs = []
-for (g_file, metadata_file) in tqdm(list_graph_metadata_files[0:10]):
+for (g_file, metadata_file) in tqdm(list_graph_metadata_files):
     if ".bin" in g_file:
         with open(os.path.join(training_graphs_path, g_file), "rb") as f:
             graph = pickle.load(f)
@@ -285,7 +288,7 @@ class HeteroRGCNLayer(nn.Module):
 
         self.common_space_trans = nn.Linear(in_size, out_size)
         
-        self.gru_node2tok = nn.GRU(in_size, out_size)
+        self.gru_node2tok = nn.GRU(in_size, out_size, num_layers=2, dropout=feat_drop)
         
         self.feat_drop = nn.Dropout(feat_drop)
         self.attn_drop = nn.Dropout(attn_drop)
@@ -387,7 +390,7 @@ class HeteroRGCNLayer(nn.Module):
         if 'srl' in graph.ntypes:
             self.__srl_aggregation(graph)
         if 'ent' in graph.ntypes:
-            self.__ent_aggregation(graph)         
+            self.__ent_aggregation(graph)
         if 'tok' in graph.ntypes:
             self.__tok_aggregation(graph)
 
@@ -397,10 +400,14 @@ class HeteroRGCNLayer(nn.Module):
         if 'mh_sent' in graph.nodes['query'].data:
             h_mh_sent = graph.nodes['query'].data.pop('mh_sent').view(1,-1,self.in_size) # 2 sent share an entity
             gru_input = torch.cat((h_mh_sent, gru_input), dim=0)
+            del h_mh_sent
         if 'srl' in graph.nodes['query'].data:
-            h_mh_sent = graph.nodes['query'].data.pop('srl').view(1,-1,self.in_size) # 2 sent share an entity
-            gru_input = torch.cat((h_mh_sent, gru_input), dim=0)
+            h_srl = graph.nodes['query'].data.pop('srl').view(1,-1,self.in_size) # 2 sent share an entity
+            gru_input = torch.cat((h_srl, gru_input), dim=0)
+            del h_srl
         graph.nodes['query'].data['h'] = self.gru_node2tok(gru_input)[0][-1]
+        del h_self_query
+        del gru_input
 
     def __sent_aggregation(self, graph):
         h_self_sent = graph.nodes['sent'].data.pop('self_sent').view(1,-1,self.in_size)
@@ -408,45 +415,59 @@ class HeteroRGCNLayer(nn.Module):
         if 'srl' in graph.nodes['sent'].data:
             h_srl = graph.nodes['sent'].data.pop('srl').view(1,-1,self.in_size)
             gru_input = torch.cat((h_srl, gru_input), dim=0)
+            del h_srl
         if 'mh_sent' in graph.nodes['sent'].data:
             h_mh_sent = graph.nodes['sent'].data.pop('mh_sent').view(1,-1,self.in_size) # 2 sent share an entity
             gru_input = torch.cat((h_mh_sent, gru_input), dim=0)
+            del h_mh_sent
         if 'sent' in graph.nodes['sent'].data:
             h_sent = graph.nodes['sent'].data.pop('sent').view(1,-1,self.in_size)
             gru_input = torch.cat((h_sent, gru_input), dim=0)
+            del h_sent
         if 'mh_query' in graph.nodes['sent'].data:
             h_mh_query = graph.nodes['sent'].data.pop('mh_query').view(1,-1,self.in_size) # query and sentence share a entity
             gru_input = torch.cat((h_mh_query, gru_input), dim=0)
-        if 'mh_query' in graph.nodes['sent'].data:
+            del h_mh_query
+        if 'query' in graph.nodes['sent'].data:
             h_query = graph.nodes['sent'].data.pop('query').view(1,-1,self.in_size) # query is connected to each sentence to foster the sp prediction
             gru_input = torch.cat((h_query, gru_input), dim=0)
+            del h_query
         # 0 to take the output and -1 to take the embedding of the sentence (last token)
         graph.nodes['sent'].data['h'] = self.gru_node2tok(gru_input)[0][-1]
-   
+        del h_self_sent
+        del gru_input
+
     def __srl_aggregation(self, graph):
         h_srl = graph.nodes['srl'].data.pop('self_srl').view(1,-1,self.in_size)
         gru_input = h_srl
         if 'ent' in graph.nodes['srl'].data:
             h_ent = graph.nodes['srl'].data.pop('ent').view(1,-1,self.in_size)
             gru_input = torch.cat((h_ent, gru_input), dim=0)
+            del h_ent
         if 'mh_srl' in graph.nodes['srl'].data:
             h_srl_mh = graph.nodes['srl'].data.pop('mh_srl').view(1,-1,self.in_size) # same srl in another sentence
             gru_input = torch.cat((h_srl_mh, gru_input), dim=0)
+            del h_srl_mh
         if 'query_srl' in graph.nodes['srl'].data:
             h_srl_query = graph.nodes['srl'].data.pop('query_srl').view(1,-1,self.in_size)
             gru_input = torch.cat((h_srl_query, gru_input), dim=0)
+            del h_srl_query
         if 'srl' in graph.nodes['srl'].data:
             # srl argument in a argument in the same triple
             h_srl = graph.nodes['srl'].data.pop('srl').view(1,-1,self.in_size)
             gru_input = torch.cat((h_srl, gru_input), dim=0)
+            del h_srl
         if 'srl_tmp' in graph.nodes['srl'].data:
             h_tmp = graph.nodes['srl'].data.pop('srl_tmp').view(1,-1,self.in_size)
             gru_input = torch.cat((h_tmp, gru_input), dim=0)
+            del h_tmp
         if 'srl_loc' in graph.nodes['srl'].data:
             h_loc = graph.nodes['srl'].data.pop('srl_loc').view(1,-1,self.in_size)
             gru_input = torch.cat((h_loc, gru_input), dim=0)
+            del h_loc
 
-        graph.nodes['srl'].data['h'] = self.gru_node2tok(gru_input)[0][-1]
+        graph.nodes['srl'].data['h'] = self.gru_node2tok(gru_input)[0][-1]        
+        del gru_input
 
     def __ent_aggregation(self, graph):
         h_self_ent = graph.nodes['ent'].data.pop('self_ent').view(1,-1,self.in_size)
@@ -454,11 +475,14 @@ class HeteroRGCNLayer(nn.Module):
         if 'mh_ent' in graph.nodes['ent'].data:
             h_mh_ent = graph.nodes['ent'].data.pop('mh_ent').view(1,-1,self.in_size)
             gru_input = torch.cat((h_mh_ent, gru_input), dim=0)
+            del h_mh_ent
         if 'ent_rel' in graph.nodes['ent'].data:
             h_ent_rel = graph.nodes['ent'].data.pop('ent_rel').view(1,-1,self.in_size)
             gru_input = torch.cat((h_ent_rel, gru_input), dim=0)
-
+            del h_ent_rel
         graph.nodes['ent'].data['h'] = self.gru_node2tok(gru_input)[0][-1]
+        del h_self_ent        
+        del gru_input
 
     def __tok_aggregation(self, graph):
         h_tok = graph.nodes['tok'].data.pop('self_tok').view(1,-1,self.in_size)
@@ -467,11 +491,14 @@ class HeteroRGCNLayer(nn.Module):
             # there can be an instance without entities (not common though)
             h_ent = graph.nodes['tok'].data.pop('ent').view(1,-1,self.in_size)
             gru_input = torch.cat((h_ent, gru_input), dim=0)
+            del h_ent
         if 'srl' in graph.nodes['tok'].data:
             h_srl = graph.nodes['tok'].data.pop('srl').view(1,-1,self.in_size)
             gru_input = torch.cat((h_srl, gru_input), dim=0)
-        
+            del h_srl
         graph.nodes['tok'].data['h'] = self.gru_node2tok(gru_input)[0][-1]
+        del h_tok
+        del gru_input
 
     def forward(self, G, feat_dict, bert_token_emb):
         # ['sent2doc', 'srl2sent', 'srl2tok', 'doc2doc_self', 'sent2sent', 'srl2srl', 'srl2self', 'token2token_self', 'srl_multihop', 
@@ -679,8 +706,6 @@ class HGNModel(BertPreTrainedModel):
             final_loss += self.weight_srl_loss*graph_out['srl']['loss']
         if graph_out['ent']['loss'] is not None:
             final_loss += self.weight_ent_loss*graph_out['ent']['loss']
-#         if graph_out['ans_type']['loss'] is not None:
-#             final_loss += self.weight_ans_type_loss*graph_out['ans_type']['loss']
         
         return {'loss': final_loss, 
                 'sent': graph_out['sent'], 
@@ -962,7 +987,7 @@ model.cuda()
 # 
 
 # %%
-# for step, b_graph in enumerate(tqdm(list_graphs)):
+# for step, b_graph in enumerate(tqdm(list_graphs[0:1])):
 #     model.zero_grad()
 #     # forward
 #     input_ids=tensor_input_ids[step].unsqueeze(0).to(device)
@@ -976,7 +1001,11 @@ model.cuda()
 #                    token_type_ids=token_type_ids, 
 #                    start_positions=start_positions,
 #                    end_positions=end_positions)
-#     break
+#     del input_ids
+#     del attention_mask
+#     del token_type_ids
+#     del start_positions
+#     del end_positions
 
 
 # %%
@@ -1373,14 +1402,13 @@ def record_eval_metric(neptune, metrics):
 
 
 # %%
-model_path = '/workspace/ml-workspace/thesis_git/HSGN/models'
+model_path = 'models'
 
 best_eval_f1 = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="40K hierarchical node aggr", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
-    neptune.append_tag(["yes_no span", "bigru initial emb", "bottom-up", "ent relation", "no SRL rel", "Query node", "multihop edges", "residual", "w_yn"])
-    neptune.set_property('server', 'IRGPU2')
+with neptune.create_experiment(name="gru aggr. 2 layers & dropout", params=PARAMS, upload_source_files=['./src/models/GAT_Hierar_Tok_Node_Aggr.py']):
+    neptune.set_property('server', 'nipa')
     neptune.set_property('training_set_path', training_path)
     neptune.set_property('dev_set_path', dev_path)
 
@@ -1455,8 +1483,6 @@ with neptune.create_experiment(name="40K hierarchical node aggr", params=PARAMS,
                 neptune.log_metric("ent_loss", ent_loss.detach().item())
             if span_loss is not None:
                 neptune.log_metric("span_loss", span_loss.detach().item())
-#             if ans_type_loss is not None:
-#                 neptune.log_metric("ans_type_loss", ans_type_loss.detach().item())
 
             # backpropagation
             total_loss.backward()
@@ -1464,13 +1490,6 @@ with neptune.create_experiment(name="40K hierarchical node aggr", params=PARAMS,
             optimizer.step()
             scheduler.step()
             total_train_loss += total_loss.detach().item()
-
-            # free-up gpu memory
-            del input_ids
-            del attention_mask
-            del token_type_ids
-            del start_positions
-            del end_positions
             
         # Calculate the average loss over all of the batches.
         avg_train_loss = total_train_loss / len(list_graphs)            
