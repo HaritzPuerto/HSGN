@@ -287,9 +287,9 @@ class HeteroRGCNLayer(nn.Module):
         self.node_att = nn.Linear(2 * in_size, out_size)
 
         self.common_space_trans = nn.Linear(in_size, out_size)
-        
+       
         self.gru_node2tok = nn.GRU(in_size, out_size, num_layers=2, dropout=feat_drop)
-        
+        self.reduction_mlp = nn.Linear(in_size * 2, out_size)
         self.feat_drop = nn.Dropout(feat_drop)
         self.attn_drop = nn.Dropout(attn_drop)
         
@@ -300,7 +300,6 @@ class HeteroRGCNLayer(nn.Module):
         self.residual = residual
 
         self.reset_parameters()
-
 
     def message_func_rel(self, bert_token_emb, edges):
         '''
@@ -396,109 +395,105 @@ class HeteroRGCNLayer(nn.Module):
 
     def __query_aggregation(self, graph):
         h_self_query = graph.nodes['query'].data.pop('self_query').view(1,-1,self.in_size)
-        gru_input = h_self_query
+        gru_input = []
         if 'mh_sent' in graph.nodes['query'].data:
             h_mh_sent = graph.nodes['query'].data.pop('mh_sent').view(1,-1,self.in_size) # 2 sent share an entity
-            gru_input = torch.cat((h_mh_sent, gru_input), dim=0)
-            del h_mh_sent
+            gru_input.append(h_mh_sent)
         if 'srl' in graph.nodes['query'].data:
             h_srl = graph.nodes['query'].data.pop('srl').view(1,-1,self.in_size) # 2 sent share an entity
-            gru_input = torch.cat((h_srl, gru_input), dim=0)
-            del h_srl
-        graph.nodes['query'].data['h'] = self.gru_node2tok(gru_input)[0][-1]
-        del h_self_query
-        del gru_input
+            gru_input.append(h_srl)
+        if len(gru_input) > 0:
+            gru_input = torch.cat(gru_input)
+            neighbors = self.gru_node2tok(gru_input, torch.cat((h_self_query, h_self_query)))[0][-1]
+            reduction_input = torch.cat((h_self_query.view(-1, self.in_size), neighbors), dim=1)
+            graph.nodes['query'].data['h'] = F.leaky_relu(self.reduction_mlp(reduction_input))
 
     def __sent_aggregation(self, graph):
         h_self_sent = graph.nodes['sent'].data.pop('self_sent').view(1,-1,self.in_size)
-        gru_input = h_self_sent
-        if 'srl' in graph.nodes['sent'].data:
-            h_srl = graph.nodes['sent'].data.pop('srl').view(1,-1,self.in_size)
-            gru_input = torch.cat((h_srl, gru_input), dim=0)
-            del h_srl
-        if 'mh_sent' in graph.nodes['sent'].data:
-            h_mh_sent = graph.nodes['sent'].data.pop('mh_sent').view(1,-1,self.in_size) # 2 sent share an entity
-            gru_input = torch.cat((h_mh_sent, gru_input), dim=0)
-            del h_mh_sent
-        if 'sent' in graph.nodes['sent'].data:
-            h_sent = graph.nodes['sent'].data.pop('sent').view(1,-1,self.in_size)
-            gru_input = torch.cat((h_sent, gru_input), dim=0)
-            del h_sent
-        if 'mh_query' in graph.nodes['sent'].data:
-            h_mh_query = graph.nodes['sent'].data.pop('mh_query').view(1,-1,self.in_size) # query and sentence share a entity
-            gru_input = torch.cat((h_mh_query, gru_input), dim=0)
-            del h_mh_query
+        gru_input = []
+
         if 'query' in graph.nodes['sent'].data:
             h_query = graph.nodes['sent'].data.pop('query').view(1,-1,self.in_size) # query is connected to each sentence to foster the sp prediction
-            gru_input = torch.cat((h_query, gru_input), dim=0)
-            del h_query
-        # 0 to take the output and -1 to take the embedding of the sentence (last token)
-        graph.nodes['sent'].data['h'] = self.gru_node2tok(gru_input)[0][-1]
-        del h_self_sent
-        del gru_input
+            gru_input.append(h_query)
+        if 'mh_query' in graph.nodes['sent'].data:
+            h_mh_query = graph.nodes['sent'].data.pop('mh_query').view(1,-1,self.in_size) # query and sentence share a entity
+            gru_input.append(h_mh_query)
+        if 'sent' in graph.nodes['sent'].data:
+            h_sent = graph.nodes['sent'].data.pop('sent').view(1,-1,self.in_size)
+            gru_input.append(h_sent)
+        if 'mh_sent' in graph.nodes['sent'].data:
+            h_mh_sent = graph.nodes['sent'].data.pop('mh_sent').view(1,-1,self.in_size) # 2 sent share an entity
+            gru_input.append(h_mh_sent)
+        if 'srl' in graph.nodes['sent'].data:
+            h_srl = graph.nodes['sent'].data.pop('srl').view(1,-1,self.in_size)
+            gru_input.append(h_srl)
+        
+        if len(gru_input) > 0:
+            gru_input = torch.cat(gru_input)
+            neighbors = self.gru_node2tok(gru_input, torch.cat((h_self_sent,h_self_sent)))[0][-1]
+            reduction_input = torch.cat((h_self_sent.view(-1, self.in_size), neighbors), dim=1)
+            graph.nodes['sent'].data['h'] = F.leaky_relu(self.reduction_mlp(reduction_input))
 
     def __srl_aggregation(self, graph):
-        h_srl = graph.nodes['srl'].data.pop('self_srl').view(1,-1,self.in_size)
-        gru_input = h_srl
-        if 'ent' in graph.nodes['srl'].data:
-            h_ent = graph.nodes['srl'].data.pop('ent').view(1,-1,self.in_size)
-            gru_input = torch.cat((h_ent, gru_input), dim=0)
-            del h_ent
-        if 'mh_srl' in graph.nodes['srl'].data:
-            h_srl_mh = graph.nodes['srl'].data.pop('mh_srl').view(1,-1,self.in_size) # same srl in another sentence
-            gru_input = torch.cat((h_srl_mh, gru_input), dim=0)
-            del h_srl_mh
+        h_self_srl = graph.nodes['srl'].data.pop('self_srl').view(1,-1,self.in_size)
+        gru_input = []
+        if 'srl_loc' in graph.nodes['srl'].data:
+            h_loc = graph.nodes['srl'].data.pop('srl_loc').view(1,-1,self.in_size)
+            gru_input.append(h_loc)
+        if 'srl_tmp' in graph.nodes['srl'].data:
+            h_tmp = graph.nodes['srl'].data.pop('srl_tmp').view(1,-1,self.in_size)
+            gru_input.append(h_tmp)
         if 'query_srl' in graph.nodes['srl'].data:
             h_srl_query = graph.nodes['srl'].data.pop('query_srl').view(1,-1,self.in_size)
-            gru_input = torch.cat((h_srl_query, gru_input), dim=0)
-            del h_srl_query
+            gru_input.append(h_srl_query)
         if 'srl' in graph.nodes['srl'].data:
             # srl argument in a argument in the same triple
             h_srl = graph.nodes['srl'].data.pop('srl').view(1,-1,self.in_size)
-            gru_input = torch.cat((h_srl, gru_input), dim=0)
-            del h_srl
-        if 'srl_tmp' in graph.nodes['srl'].data:
-            h_tmp = graph.nodes['srl'].data.pop('srl_tmp').view(1,-1,self.in_size)
-            gru_input = torch.cat((h_tmp, gru_input), dim=0)
-            del h_tmp
-        if 'srl_loc' in graph.nodes['srl'].data:
-            h_loc = graph.nodes['srl'].data.pop('srl_loc').view(1,-1,self.in_size)
-            gru_input = torch.cat((h_loc, gru_input), dim=0)
-            del h_loc
-
-        graph.nodes['srl'].data['h'] = self.gru_node2tok(gru_input)[0][-1]        
-        del gru_input
+            gru_input.append(h_srl)
+        if 'mh_srl' in graph.nodes['srl'].data:
+            h_srl_mh = graph.nodes['srl'].data.pop('mh_srl').view(1,-1,self.in_size) # same srl in another sentence
+            gru_input.append(h_srl_mh)
+        if 'ent' in graph.nodes['srl'].data:
+            h_ent = graph.nodes['srl'].data.pop('ent').view(1,-1,self.in_size)
+            gru_input.append(h_ent)
+        
+        if len(gru_input) > 0:
+            gru_input = torch.cat(gru_input)
+            neighbors = self.gru_node2tok(gru_input, torch.cat((h_self_srl, h_self_srl)))[0][-1]
+            reduction_input = torch.cat((h_self_srl.view(-1,self.in_size), neighbors), dim=1)
+            graph.nodes['srl'].data['h'] = F.leaky_relu(self.reduction_mlp(reduction_input))
 
     def __ent_aggregation(self, graph):
         h_self_ent = graph.nodes['ent'].data.pop('self_ent').view(1,-1,self.in_size)
-        gru_input = h_self_ent
-        if 'mh_ent' in graph.nodes['ent'].data:
-            h_mh_ent = graph.nodes['ent'].data.pop('mh_ent').view(1,-1,self.in_size)
-            gru_input = torch.cat((h_mh_ent, gru_input), dim=0)
-            del h_mh_ent
+        gru_input = []
         if 'ent_rel' in graph.nodes['ent'].data:
             h_ent_rel = graph.nodes['ent'].data.pop('ent_rel').view(1,-1,self.in_size)
-            gru_input = torch.cat((h_ent_rel, gru_input), dim=0)
-            del h_ent_rel
-        graph.nodes['ent'].data['h'] = self.gru_node2tok(gru_input)[0][-1]
-        del h_self_ent        
-        del gru_input
+            gru_input.append(h_ent_rel)
+        if 'mh_ent' in graph.nodes['ent'].data:
+            h_mh_ent = graph.nodes['ent'].data.pop('mh_ent').view(1,-1,self.in_size)
+            gru_input.append(h_mh_ent)
+        if len(gru_input) > 0:
+            gru_input = torch.cat(gru_input)
+            neighbors = self.gru_node2tok(gru_input, torch.cat((h_self_ent, h_self_ent)))[0][-1]
+            reduction_input = torch.cat((h_self_ent.view(-1,self.in_size), neighbors), dim=1)
+            new_h = F.leaky_relu(self.reduction_mlp(reduction_input))
+            graph.nodes['ent'].data['h'] = new_h
 
     def __tok_aggregation(self, graph):
         h_tok = graph.nodes['tok'].data.pop('self_tok').view(1,-1,self.in_size)
-        gru_input = h_tok
+        gru_input = []
+        if 'srl' in graph.nodes['tok'].data:
+            h_srl = graph.nodes['tok'].data.pop('srl').view(1,-1,self.in_size)
+            gru_input.append(h_srl)
         if 'ent' in graph.nodes['tok'].data:
             # there can be an instance without entities (not common though)
             h_ent = graph.nodes['tok'].data.pop('ent').view(1,-1,self.in_size)
-            gru_input = torch.cat((h_ent, gru_input), dim=0)
-            del h_ent
-        if 'srl' in graph.nodes['tok'].data:
-            h_srl = graph.nodes['tok'].data.pop('srl').view(1,-1,self.in_size)
-            gru_input = torch.cat((h_srl, gru_input), dim=0)
-            del h_srl
-        graph.nodes['tok'].data['h'] = self.gru_node2tok(gru_input)[0][-1]
-        del h_tok
-        del gru_input
+            gru_input.append(h_ent)
+        if len(gru_input) > 0:
+            gru_input = torch.cat(gru_input)
+            neighbors = self.gru_node2tok(gru_input, torch.cat((h_tok, h_tok)))[0][-1]
+            reduction_input = torch.cat((h_tok.view(-1,self.in_size), neighbors), dim=1)
+            graph.nodes['tok'].data['h'] = F.leaky_relu(self.reduction_mlp(reduction_input))
 
     def forward(self, G, feat_dict, bert_token_emb):
         # ['sent2doc', 'srl2sent', 'srl2tok', 'doc2doc_self', 'sent2sent', 'srl2srl', 'srl2self', 'token2token_self', 'srl_multihop', 
@@ -605,7 +600,7 @@ class HeteroRGCN(nn.Module):
 bert_dim = 768 # default
 if 'large' in pretrained_weights:
     bert_dim = 1024
-dict_params = {'in_feats': bert_dim, 'out_feats': bert_dim, 'feat_drop': 0.1, 'attn_drop': 0.1, 'residual': True, 'hidden_size_classifier': 768,
+dict_params = {'in_feats': bert_dim, 'out_feats': bert_dim, 'feat_drop': 0.2, 'attn_drop': 0.1, 'residual': True, 'hidden_size_classifier': 768,
                'weight_sent_loss': 1, 'weight_srl_loss': 1, 'weight_ent_loss': 1,
                'weight_span_loss': 2, 'weight_ans_type_loss': 1, 
                'gat_layers': 2, 'etypes': graph.etypes}
@@ -987,25 +982,20 @@ model.cuda()
 # 
 
 # %%
-# for step, b_graph in enumerate(tqdm(list_graphs[0:1])):
-#     model.zero_grad()
-#     # forward
-#     input_ids=tensor_input_ids[step].unsqueeze(0).to(device)
-#     attention_mask=tensor_attention_masks[step].unsqueeze(0).to(device)
-#     token_type_ids=tensor_token_type_ids[step].unsqueeze(0).to(device) 
-#     start_positions=torch.tensor([list_span_idx[step][0]], device='cuda')
-#     end_positions=torch.tensor([list_span_idx[step][1]], device='cuda')
-#     output = model(b_graph,
-#                    input_ids=input_ids,
-#                    attention_mask=attention_mask,
-#                    token_type_ids=token_type_ids, 
-#                    start_positions=start_positions,
-#                    end_positions=end_positions)
-#     del input_ids
-#     del attention_mask
-#     del token_type_ids
-#     del start_positions
-#     del end_positions
+for step, b_graph in enumerate(tqdm(list_graphs[0:1])):
+    model.zero_grad()
+    # forward
+    input_ids=tensor_input_ids[step].unsqueeze(0).to(device)
+    attention_mask=tensor_attention_masks[step].unsqueeze(0).to(device)
+    token_type_ids=tensor_token_type_ids[step].unsqueeze(0).to(device) 
+    start_positions=torch.tensor([list_span_idx[step][0]], device='cuda')
+    end_positions=torch.tensor([list_span_idx[step][1]], device='cuda')
+    output = model(b_graph,
+                   input_ids=input_ids,
+                   attention_mask=attention_mask,
+                   token_type_ids=token_type_ids, 
+                   start_positions=start_positions,
+                   end_positions=end_positions)
 
 
 # %%
@@ -1407,7 +1397,7 @@ model_path = 'models'
 best_eval_f1 = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="gru aggr. 2 layers & dropout", params=PARAMS, upload_source_files=['./src/models/GAT_Hierar_Tok_Node_Aggr.py']):
+with neptune.create_experiment(name="lstm + mlp aggr. 2 layers & dropout", params=PARAMS, upload_source_files=['./src/models/GAT_Hierar_Tok_Node_Aggr.py']):
     neptune.set_property('server', 'nipa')
     neptune.set_property('training_set_path', training_path)
     neptune.set_property('dev_set_path', dev_path)
