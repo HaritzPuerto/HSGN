@@ -25,6 +25,7 @@ from dgl.nn.pytorch import edge_softmax, GATConv
 import dgl
 from dgl.nn.pytorch.conv import GATConv, RelGraphConv
 
+import functools
 warnings.filterwarnings(action='once')
 
 os.environ['DGLBACKEND'] = 'pytorch'
@@ -41,7 +42,7 @@ torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
 # %%
-data_path = "data/"
+data_path = "./data/"
 hotpot_qa_path = os.path.join(data_path, "external")
 
 with open(os.path.join(hotpot_qa_path, "hotpot_train_v1.1.json"), "r") as f:
@@ -375,11 +376,15 @@ class HeteroRGCNLayer(nn.Module):
                             updt_dst],
                            dim=1)
         e = F.leaky_relu(self.at_att(cat_uv))
-        return {'m': updt_src, 'e': e,} 
+        return {'m': updt_src, 'e': e} 
 
     def transform_src(self, edges):
         m = F.leaky_relu(self.node_trans(edges.src['h']))
         return {'m': m}
+
+    def reduce_fn(self, src_name, nodes):
+        h = nodes.mailbox['m'].view(-1, 768)
+        return {src_name: h}
 
     def hierarchical_aggregation(self, graph):
         if 'query' in graph.ntypes:
@@ -476,8 +481,7 @@ class HeteroRGCNLayer(nn.Module):
             gru_input = torch.cat(gru_input)
             neighbors = self.gru_node2tok(gru_input, torch.cat((h_self_ent, h_self_ent)))[0][-1]
             reduction_input = torch.cat((h_self_ent.view(-1,self.in_size), neighbors), dim=1)
-            new_h = F.leaky_relu(self.reduction_mlp(reduction_input))
-            graph.nodes['ent'].data['h'] = new_h
+            graph.nodes['ent'].data['h'] = F.leaky_relu(self.reduction_mlp(reduction_input))
 
     def __tok_aggregation(self, graph):
         h_tok = graph.nodes['tok'].data.pop('self_tok').view(1,-1,self.in_size)
@@ -500,7 +504,6 @@ class HeteroRGCNLayer(nn.Module):
         # 'sent_multihop', 'ent2srl', 'ent2tok', 'ent2ent_self', 'ent2ent_rel', 'ent_multihop', 'srl_loc2srl', 'srl_tmp2srl', 'srl2query', 'query_srl2srl', 'query2srl_pred']
         # The input is a dictionary of node features for each type
         funcs = {}
-                
         for srctype, etype, dsttype in G.canonical_etypes:
             if 'h' not in G.nodes[srctype].data:
                 G.nodes[srctype].data['h'] = self.feat_drop(feat_dict[srctype])
@@ -513,10 +516,10 @@ class HeteroRGCNLayer(nn.Module):
             
             src_name = etype.split("2")[0]
             if "ent_rel2ent" == etype:
-                funcs[etype] = ((lambda e: self.message_func_rel(bert_token_emb, e)) , fn.sum('m', src_name))
+                funcs[etype] = ((lambda e: self.message_func_rel(bert_token_emb, e)) , functools.partial(self.reduce_fn, src_name))
             else:
-                funcs[etype] = (self.transform_src, fn.sum('m', src_name))
-        G.multi_update_all(funcs, 'sum')
+                funcs[etype] = (self.transform_src, functools.partial(self.reduce_fn, src_name))
+        G.multi_update_all(funcs, 'stack')
         ## update tokens
         self.hierarchical_aggregation(G)
 
@@ -982,21 +985,20 @@ model.cuda()
 # 
 
 # %%
-for step, b_graph in enumerate(tqdm(list_graphs[0:1])):
-    model.zero_grad()
-    # forward
-    input_ids=tensor_input_ids[step].unsqueeze(0).to(device)
-    attention_mask=tensor_attention_masks[step].unsqueeze(0).to(device)
-    token_type_ids=tensor_token_type_ids[step].unsqueeze(0).to(device) 
-    start_positions=torch.tensor([list_span_idx[step][0]], device='cuda')
-    end_positions=torch.tensor([list_span_idx[step][1]], device='cuda')
-    output = model(b_graph,
-                   input_ids=input_ids,
-                   attention_mask=attention_mask,
-                   token_type_ids=token_type_ids, 
-                   start_positions=start_positions,
-                   end_positions=end_positions)
-
+# for step, b_graph in enumerate(tqdm(list_graphs)):
+#     model.zero_grad()
+#     # forward
+#     input_ids=tensor_input_ids[step].unsqueeze(0).to(device)
+#     attention_mask=tensor_attention_masks[step].unsqueeze(0).to(device)
+#     token_type_ids=tensor_token_type_ids[step].unsqueeze(0).to(device) 
+#     start_positions=torch.tensor([list_span_idx[step][0]], device='cuda')
+#     end_positions=torch.tensor([list_span_idx[step][1]], device='cuda')
+#     output = model(b_graph,
+#                    input_ids=input_ids,
+#                    attention_mask=attention_mask,
+#                    token_type_ids=token_type_ids, 
+#                    start_positions=start_positions,
+#                    end_positions=end_positions)
 
 # %%
 lr = 1e-5
@@ -1397,7 +1399,7 @@ model_path = 'models'
 best_eval_f1 = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="lstm + mlp aggr. 2 layers & dropout", params=PARAMS, upload_source_files=['./src/models/GAT_Hierar_Tok_Node_Aggr.py']):
+with neptune.create_experiment(name="NO SUM lstm + mlp aggr. 2 layers & dropout", params=PARAMS, upload_source_files=['./src/models/GAT_Hierar_Tok_Node_Aggr.py']):
     neptune.set_property('server', 'nipa')
     neptune.set_property('training_set_path', training_path)
     neptune.set_property('dev_set_path', dev_path)
