@@ -1217,7 +1217,7 @@ class Validation():
             #span prediction
             golden_ans = self.dataset[step]['answer']
             predicted_ans = ""
-            predicted_ans = get_pred_ans_str(self.tensor_input_ids[step], output, tokenizer)
+            predicted_ans = self.__get_pred_ans_str(self.tensor_input_ids[step], output)
 #             if output['ans_type']['pred'] == 0:
 #                 predicted_ans = get_pred_ans_str(self.tensor_input_ids[step], output, tokenizer)
 #             elif output['ans_type']['pred'] == 1:
@@ -1233,6 +1233,46 @@ class Validation():
         for k in metrics.keys():
             metrics[k] /= N
         return metrics
+    
+    def __get_pred_ans_str(self, input_ids, output):
+        st, end = self.__get_st_end_span_idx(output['span']['start_logits'].squeeze(),
+                                             output['span']['end_logits'].squeeze())
+        return self.__get_str_span(input_ids, st, end)
+
+    def __get_str_span(self, input_ids, st, end):
+        return self.tokenizer.decode(input_ids[st:end])
+    
+    def __get_best_indexes(self, logits, n_best_size):
+        """Get the n-best logits from a list."""
+        index_and_score = sorted(enumerate(logits), key=lambda x: x[1], reverse=True)
+
+        best_indexes = []
+        for i in range(len(index_and_score)):
+            if i >= n_best_size:
+                break
+            best_indexes.append(index_and_score[i][0])
+        return best_indexes
+    
+    def __get_st_end_span_idx(self, start_logits, end_logits, max_answer_length = 100):
+        start_indexes = _get_best_indexes(start_logits, 10)
+        end_indexes = _get_best_indexes(end_logits, 10)
+        for start_index in start_indexes:
+            for end_index in end_indexes:
+                # We could hypothetically create invalid predictions, e.g., predict
+                # that the start of the span is in the question. We throw out all
+                # invalid predictions.
+                if start_index >= 512:
+                    continue
+                if end_index >= 512:
+                    continue
+                if end_index < start_index:
+                    continue
+                length = end_index - start_index + 1
+                if length > max_answer_length:
+                    continue
+                return (start_index, end_index)
+        return (0, 0)
+    
     def update_sp_metrics(self, metrics, prediction_sent, sent_labels):
         em, f1, prec, recall = evaluation_metrics(prediction_sent.type(torch.DoubleTensor), 
                                                   sent_labels.type(torch.DoubleTensor))
@@ -1459,6 +1499,6 @@ with neptune.create_experiment(name="40K query edges inverse htok layer gru", pa
 
     print("Total training took {:} (h:mm:ss)".format(format_time(time.time()-total_t0)))
     # create a zip file for the folder of the model
-    zipdir(model_path, os.path.join(model_path, 'checkpoint.zip'))
-    # upload the model to neptune
-    neptune.send_artifact(os.path.join(model_path, 'checkpoint.zip'))
+#     zipdir(model_path, os.path.join(model_path, 'checkpoint.zip'))
+#     # upload the model to neptune
+#     neptune.send_artifact(os.path.join(model_path, 'checkpoint.zip'))
