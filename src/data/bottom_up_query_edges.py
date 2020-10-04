@@ -99,7 +99,7 @@ class Dataset():
     def __init__(self, dataset = None, list_hotpot_ner = None, dict_ins_doc_sent_srl_triples = None,
                  dict_ins_query_triples = None, list_entities_query = None, batch_size = None, max_len = 512):
         self.tokenizer = BertTokenizer.from_pretrained(pretrained_weights,
-                                                       do_basic_tokenize=True,
+                                                       do_basic_tokenize=False,
                                                        clean_text=False)
         self.dataset = dataset
         self.list_hotpot_ner = list_hotpot_ner
@@ -1239,7 +1239,7 @@ tensor_token_type_ids = torch.tensor(list_token_type_ids)
 tensor_attention_masks = torch.tensor(list_attention_masks)
 
 # %%
-dev_path = os.path.join(data_path, 'processed/dev/heterog_20200910_query_edges')
+dev_path = os.path.join(data_path, 'processed/dev/heterog_20201004_query_edges')
 dev_graph_path = os.path.join(dev_path, 'graphs')
 dev_metadata_path = os.path.join(dev_path, 'metadata')
 
@@ -1257,3 +1257,5 @@ torch.save(tensor_token_type_ids, os.path.join(dev_path, 'tensor_token_type_ids.
 torch.save(tensor_attention_masks, os.path.join(dev_path, 'tensor_attention_masks.p'))
 with open(os.path.join(dev_path, 'list_span_idx.p'), 'wb') as f:
     pickle.dump(list_span_idx, f)
+
+# %%

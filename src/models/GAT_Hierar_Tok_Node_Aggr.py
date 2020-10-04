@@ -57,7 +57,7 @@ pretrained_weights = 'bert-base-cased'
 
 # %%
 training_path = os.path.join(data_path, "processed/training/heterog_20200910_query_edges/")
-dev_path = os.path.join(data_path, "processed/dev/heterog_20200910_query_edges/")
+dev_path = os.path.join(data_path, "processed/dev/heterog_20201004_query_edges/")
 
 with open(os.path.join(training_path, 'list_span_idx.p'), 'rb') as f:
     list_span_idx = pickle.load(f)
@@ -1152,14 +1152,7 @@ def exact_match_score(prediction, ground_truth):
 
 
 # %%
-def get_pred_ans_str(input_ids, output, tokenizer):
-    st = torch.argmax(output['span']['start_logits'], dim=1).item()
-    end = torch.argmax(output['span']['end_logits'], dim=1).item()
-    return tokenizer.decode(input_ids[st:end])
-
-
-# %%
-tokenizer = BertTokenizer.from_pretrained(pretrained_weights)
+tokenizer = BertTokenizer.from_pretrained(pretrained_weights, do_basic_tokenize=False, clean_text=False)
 
 
 # %%
@@ -1254,8 +1247,8 @@ class Validation():
         return best_indexes
     
     def __get_st_end_span_idx(self, start_logits, end_logits, max_answer_length = 100):
-        start_indexes = _get_best_indexes(start_logits, 10)
-        end_indexes = _get_best_indexes(end_logits, 10)
+        start_indexes = self.__get_best_indexes(start_logits, 10)
+        end_indexes = self.__get_best_indexes(end_logits, 10)
         for start_index in start_indexes:
             for end_index in end_indexes:
                 # We could hypothetically create invalid predictions, e.g., predict
@@ -1327,6 +1320,10 @@ class Validation():
         metrics['joint_prec'] += joint_prec
         metrics['joint_recall'] += joint_recall
 
+
+# %%
+# model = HGNModel.from_pretrained('/workspace/ml-workspace/thesis_git/HSGN/models')
+# model.to('cuda')
 
 # %%
 # validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
