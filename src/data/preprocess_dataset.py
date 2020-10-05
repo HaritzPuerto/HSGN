@@ -2,7 +2,6 @@ from .graph_creation import Dataset
 from .preprocessing import NER_stanza
 from .preprocessing import SRL
 import torch
-from tqdm import tqdm
 
 
 def add_metadata2graph(graph, metadata):

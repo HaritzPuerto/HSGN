@@ -701,7 +701,8 @@ class Validation():
         self.tensor_input_ids = tensor_input_ids
         self.tensor_attention_masks = tensor_attention_masks
         self.tensor_token_type_ids = tensor_token_type_ids
-        self.tokenizer = BertTokenizer.from_pretrained(pretrained_weights)
+        self.tokenizer = BertTokenizer.from_pretrained(pretrained_weights, 
+                                                       do_basic_tokenize=False, clean_text=False)
 
     def get_answer_predictions(self, dict_ins2dict_doc2pred):
         output_pred_sp = {}
@@ -737,6 +738,40 @@ class Validation():
         return {'answer': output_predictions_ans, 'sp': output_pred_sp}
 
     def __get_pred_ans_str(self, input_ids, output):
-        st = torch.argmax(output['span']['start_logits'], dim=1).item()
-        end = torch.argmax(output['span']['end_logits'], dim=1).item()
+        st, end = self.__get_st_end_span_idx(output['span']['start_logits'].squeeze(),
+                                             output['span']['end_logits'].squeeze())
+        return self.__get_str_span(input_ids, st, end)
+
+    def __get_str_span(self, input_ids, st, end):
         return self.tokenizer.decode(input_ids[st:end])
+    
+    def __get_best_indexes(self, logits, n_best_size):
+        """Get the n-best logits from a list."""
+        index_and_score = sorted(enumerate(logits), key=lambda x: x[1], reverse=True)
+
+        best_indexes = []
+        for i in range(len(index_and_score)):
+            if i >= n_best_size:
+                break
+            best_indexes.append(index_and_score[i][0])
+        return best_indexes
+    
+    def __get_st_end_span_idx(self, start_logits, end_logits, max_answer_length = 100):
+        start_indexes = self.__get_best_indexes(start_logits, 10)
+        end_indexes = self.__get_best_indexes(end_logits, 10)
+        for start_index in start_indexes:
+            for end_index in end_indexes:
+                # We could hypothetically create invalid predictions, e.g., predict
+                # that the start of the span is in the question. We throw out all
+                # invalid predictions.
+                if start_index >= 512:
+                    continue
+                if end_index >= 512:
+                    continue
+                if end_index < start_index:
+                    continue
+                length = end_index - start_index + 1
+                if length > max_answer_length:
+                    continue
+                return (start_index, end_index)
+        return (0, 0)
