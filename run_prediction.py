@@ -7,9 +7,9 @@ import os
 
 device = 'cuda'
 data_path = 'data/'
-#pretrained_weights = 'bert-large-cased-whole-word-masking'
-pretrained_weights = 'bert-base-cased'
-model_path = 'models/'
+pretrained_weights = 'bert-large-cased-whole-word-masking'
+#pretrained_weights = 'bert-base-cased'
+model_path = 'models/graph_model'
 doc_retr_model_path = 'models/doc_retrieval'
 
 print("Preprocessing data")
