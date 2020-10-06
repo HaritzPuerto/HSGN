@@ -756,7 +756,7 @@ class Validation():
             best_indexes.append(index_and_score[i][0])
         return best_indexes
     
-    def __get_st_end_span_idx(self, start_logits, end_logits, max_answer_length = 100):
+    def __get_st_end_span_idx(self, start_logits, end_logits, max_answer_length = 30):
         start_indexes = self.__get_best_indexes(start_logits, 10)
         end_indexes = self.__get_best_indexes(end_logits, 10)
         for start_index in start_indexes:

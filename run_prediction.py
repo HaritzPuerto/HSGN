@@ -7,9 +7,9 @@ import os
 
 device = 'cuda'
 data_path = 'data/'
-#pretrained_weights = 'bert-large-cased-whole-word-masking'
-pretrained_weights = 'bert-base-cased'
-model_path = 'models/'
+pretrained_weights = 'bert-large-cased-whole-word-masking'
+#pretrained_weights = 'bert-base-cased'
+model_path = 'models/graph_model'
 doc_retr_model_path = 'models/doc_retrieval'
 
 print("Preprocessing data")
@@ -17,7 +17,6 @@ print("Loading HotpotQA")
 hotpotqa_path = 'external/'
 with open(os.path.join(data_path, hotpotqa_path, "input.json"), "r") as f:
     hotpot = json.load(f)
-hotpot = hotpot[0:10]
 print("Loading the document retrieval model")
 doc_retr = DocumentRetrieval(device, doc_retr_model_path)
 print("Computing the relevant documents")
