@@ -56,7 +56,7 @@ pretrained_weights = 'bert-base-cased'
 # ## Processing
 
 # %%
-training_path = os.path.join(data_path, "processed/training/heterog_20200910_query_edges/")
+training_path = os.path.join(data_path, "processed/training/heterog_20201004_query_edges/")
 dev_path = os.path.join(data_path, "processed/dev/heterog_20201004_query_edges/")
 
 with open(os.path.join(training_path, 'list_span_idx.p'), 'rb') as f:
@@ -1211,12 +1211,6 @@ class Validation():
             golden_ans = self.dataset[step]['answer']
             predicted_ans = ""
             predicted_ans = self.__get_pred_ans_str(self.tensor_input_ids[step], output)
-#             if output['ans_type']['pred'] == 0:
-#                 predicted_ans = get_pred_ans_str(self.tensor_input_ids[step], output, tokenizer)
-#             elif output['ans_type']['pred'] == 1:
-#                 predicted_ans = 'yes'
-#             else:
-#                 predicted_ans = 'no'
             ans_em, ans_prec, ans_recall = self.update_answer_metrics(metrics, predicted_ans, golden_ans)
             # joint
             self.update_joint_metrics(metrics, ans_em, ans_prec, ans_recall, sp_em, sp_prec, sp_recall)                
@@ -1357,10 +1351,10 @@ def record_eval_metric(neptune, metrics):
 # %%
 model_path = '/workspace/ml-workspace/thesis_git/HSGN/models'
 
-best_eval_f1 = 0
+best_eval_em = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="40K query edges inverse htok layer gru", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
+with neptune.create_experiment(name="full query edges span fix", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
     neptune.append_tag(["yes_no span", "bigru initial emb", "bottom-up", "ent relation", "no SRL rel", "Query node", "multihop edges", "residual", "w_yn"])
     neptune.set_property('server', 'IRGPU2')
     neptune.set_property('training_set_path', training_path)
@@ -1400,9 +1394,9 @@ with neptune.create_experiment(name="40K query edges inverse htok layer gru", pa
                 model.train()
                 record_eval_metric(neptune, metrics)
 
-                curr_f1 = metrics['joint_f1']
-                if  curr_f1 > best_eval_f1:
-                    best_eval_f1 = curr_f1
+                curr_em = metrics['ans_em']
+                if  curr_em > best_eval_em:
+                    best_eval_em = curr_em
                     model.save_pretrained(model_path) 
                     
             neptune.log_metric('step', step)
@@ -1475,9 +1469,9 @@ with neptune.create_experiment(name="40K query edges inverse htok layer gru", pa
         model.train()
         record_eval_metric(neptune, metrics)
 
-        curr_f1 = metrics['joint_f1']
-        if  curr_f1 > best_eval_f1:
-            best_eval_f1 = curr_f1
+        curr_em = metrics['ans_em']
+        if  curr_em > best_eval_em:
+            best_eval_em = curr_em
             model.save_pretrained(model_path) 
 
     # Calculate the average loss over all of the batches.
