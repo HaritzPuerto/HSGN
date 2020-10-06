@@ -37,6 +37,10 @@ np.random.seed(random_seed)
 torch.manual_seed(random_seed)
 torch.cuda.manual_seed_all(random_seed)
 
+
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
+
 # %%
 data_path = "/workspace/ml-workspace/thesis_git/HSGN/data/"
 hotpot_qa_path = os.path.join(data_path, "external")
@@ -98,8 +102,6 @@ def add_metadata2graph(graph, metadata):
                 graph.nodes[node].data[k] = torch.tensor(v)
     return graph
 
-
-# %%
 
 # %%
 training_graphs_path = os.path.join(training_path, 'graphs')
@@ -1154,8 +1156,10 @@ def exact_match_score(prediction, ground_truth):
 # %%
 tokenizer = BertTokenizer.from_pretrained(pretrained_weights, do_basic_tokenize=False, clean_text=False)
 
-
 # %%
+import spacy
+
+wh_ans_len = {'which': 25, 'what':25, 'who':20, 'when':10, 'how':15, 'where':15, 'how many': 10, None: 15}
 class Validation():
 
     def __init__(self, model, dataset, validation_dataloader, tokenizer,
@@ -1163,6 +1167,7 @@ class Validation():
         self.model = model
         self.model.eval()
         self.dataset = dataset
+        self.nlp = spacy.load('en')
         self.validation_dataloader = validation_dataloader
         self.tokenizer = tokenizer
         self.tensor_input_ids = tensor_input_ids
@@ -1207,10 +1212,14 @@ class Validation():
                 prediction_ent = torch.argmax(output['ent']['probs'], dim=1)
                 ent_labels = output['ent']['lbl']
                 self.update_ent_metrics(metrics, prediction_ent, ent_labels, output['ent']['probs'][:,1])
-            #span prediction
+            # answer span prediction
+            ## wh type
+            query = self.dataset[step]['question']
+            wh = self.__findWHword(query)
+            max_ans_len = wh_ans_len[wh]
             golden_ans = self.dataset[step]['answer']
             predicted_ans = ""
-            predicted_ans = self.__get_pred_ans_str(self.tensor_input_ids[step], output)
+            predicted_ans = self.__get_pred_ans_str(self.tensor_input_ids[step], output, max_ans_len)
             ans_em, ans_prec, ans_recall = self.update_answer_metrics(metrics, predicted_ans, golden_ans)
             # joint
             self.update_joint_metrics(metrics, ans_em, ans_prec, ans_recall, sp_em, sp_prec, sp_recall)                
@@ -1221,10 +1230,69 @@ class Validation():
             metrics[k] /= N
         return metrics
     
-    def __get_pred_ans_str(self, input_ids, output):
+    def get_answer_predictions(self, dict_ins2dict_doc2pred):
+        output_pred_sp = {}
+        output_predictions_ans = {}
+        output_ent = {}
+        output_srl = {}
+        for step, b_graph in enumerate(tqdm(self.validation_dataloader)): 
+            with torch.no_grad():
+                output = self.model(b_graph,
+                               input_ids=self.tensor_input_ids[step].unsqueeze(0).to(device),
+                               attention_mask=self.tensor_attention_masks[step].unsqueeze(0).to(device),
+                               token_type_ids=self.tensor_token_type_ids[step].unsqueeze(0).to(device), 
+                               train=False)
+            _id = self.dataset[step]['_id']
+            query = self.dataset[step]['question']
+            wh = self.__findWHword(query)
+            max_ans_len = wh_ans_len[wh]
+            #answer
+            predicted_ans = ""
+            predicted_ans = self.__get_pred_ans_str(self.tensor_input_ids[step], output, max_ans_len)
+            output_predictions_ans[_id] = predicted_ans
+            # ent
+            ent = self.__get_ent_str(b_graph, self.tensor_input_ids[step], output)
+            output_ent[_id] = ent
+            # srl
+            srl = self.__get_srl_str(b_graph, self.tensor_input_ids[step], output)
+            output_srl[_id] = srl
+            #sp
+#             prediction_sent = torch.argmax(output['sent']['probs'], dim=1)
+#             sent_num = 0
+#             dict_sent_num2str = dict()
+#             for doc_idx, (doc_title, doc) in enumerate(self.dataset[step]['context']):
+#                 if dict_ins2dict_doc2pred[step][doc_idx] == 1:
+#                     for i, sent in enumerate(doc):
+#                         dict_sent_num2str[sent_num] = {'sent': i, 'doc_title': doc_title}
+#                         sent_num += 1
+#             output_pred_sp[_id] = []
+#             for i, pred in enumerate(prediction_sent):
+#                 if pred == 1:
+#                     output_pred_sp[_id].append([dict_sent_num2str[i]['doc_title'],
+#                                                 dict_sent_num2str[i]['sent']])
+        return {'answer': output_predictions_ans, 'sp': output_pred_sp,
+                'ent': output_ent, 'srl': output_srl}
+    
+    def __get_pred_ans_str(self, input_ids, output, max_ans_len):
         st, end = self.__get_st_end_span_idx(output['span']['start_logits'].squeeze(),
-                                             output['span']['end_logits'].squeeze())
+                                             output['span']['end_logits'].squeeze(), max_ans_len)
         return self.__get_str_span(input_ids, st, end)
+    
+    def __get_ent_str(self, graph, input_ids, output):
+        if 'ent' in graph.ntypes:
+            ent_node = torch.argmax(output['ent']['probs'][:,1]).item()
+            st, end = graph.nodes['ent'].data['st_end_idx'][ent_node]
+            return self.__get_str_span(input_ids, st, end)
+        else:
+            return ""
+    
+    def __get_srl_str(self, graph, input_ids, output):
+        if 'srl' in graph.ntypes:
+            srl_node = torch.argmax(output['srl']['probs'][:,1]).item()
+            st, end = graph.nodes['srl'].data['st_end_idx'][srl_node]
+            return self.__get_str_span(input_ids, st, end)
+        else: 
+            return ""
 
     def __get_str_span(self, input_ids, st, end):
         return self.tokenizer.decode(input_ids[st:end])
@@ -1240,7 +1308,7 @@ class Validation():
             best_indexes.append(index_and_score[i][0])
         return best_indexes
     
-    def __get_st_end_span_idx(self, start_logits, end_logits, max_answer_length = 100):
+    def __get_st_end_span_idx(self, start_logits, end_logits, max_answer_length = 30):
         start_indexes = self.__get_best_indexes(start_logits, 10)
         end_indexes = self.__get_best_indexes(end_logits, 10)
         for start_index in start_indexes:
@@ -1259,6 +1327,28 @@ class Validation():
                     continue
                 return (start_index, end_index)
         return (0, 0)
+    
+    def __findWHword(self, sentence):
+        candidate = ['when', 'how', 'where', 'which', 'what', 'who', 'how many']
+        sentence = sentence.lower()
+        doc = self.nlp(sentence)
+        if 'how' in sentence.split() and 'how many' in sentence:
+            return 'how many'
+        for w in reversed(doc):
+            if w.pos_ == 'NN': continue
+            else:
+                for can in candidate:
+                    if can in w.text:
+                        return can
+                break
+        whs = []
+        for idx, token in enumerate(doc):
+            for can in candidate:
+                if can in token.text:
+                    return can
+        if 'name' in sentence.lower() or doc[-1].lemma_ == 'be' or doc[-1].pos_ == 'ADP':
+            return 'what'
+        return None
     
     def update_sp_metrics(self, metrics, prediction_sent, sent_labels):
         em, f1, prec, recall = evaluation_metrics(prediction_sent.type(torch.DoubleTensor), 
@@ -1317,14 +1407,16 @@ class Validation():
 
 # %%
 # model = HGNModel.from_pretrained('/workspace/ml-workspace/thesis_git/HSGN/models')
-# model.to('cuda')
+# model.cuda()
 
 # %%
 # validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
 #                         dev_tensor_input_ids, dev_tensor_attention_masks, 
 #                         dev_tensor_token_type_ids,
 #                         dev_list_span_idx)
-# metrics = validation.do_validation()
+# preds = validation.get_answer_predictions(None)
+# with open('preds_no_wh_heuristics.json', 'w+') as f:
+#     json.dump(preds, f)
 
 # %%
 # metrics
