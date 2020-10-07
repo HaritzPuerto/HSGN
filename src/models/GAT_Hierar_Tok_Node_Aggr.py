@@ -6,6 +6,7 @@ import json
 import pickle
 import warnings
 import re
+import math
 
 from os import listdir
 from os.path import isfile, join
