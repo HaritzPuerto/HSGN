@@ -595,16 +595,7 @@ class HGNModel(BertPreTrainedModel):
         end_logits = None
         span_loss, start_logits, end_logits = self.span_prediction(sequence_output, start_positions, end_positions)
         assert not torch.isnan(start_logits).any()
-        assert not torch.isnan(end_logits).any()
-#         if train and graph_out['ans_type']['lbl'] == 0:
-#             span_loss, start_logits, end_logits = self.span_prediction(sequence_output, start_positions, end_positions)
-#             assert not torch.isnan(start_logits).any()
-#             assert not torch.isnan(end_logits).any()
-#         elif (not train) and graph_out['ans_type']['pred'] == 0:
-#             span_loss, start_logits, end_logits = self.span_prediction(sequence_output, start_positions, end_positions)
-#             assert not torch.isnan(start_logits).any()
-#             assert not torch.isnan(end_logits).any()
-            
+        assert not torch.isnan(end_logits).any()  
         # loss
         final_loss = 0.0
         if span_loss is not None:
@@ -615,14 +606,11 @@ class HGNModel(BertPreTrainedModel):
             final_loss += self.weight_srl_loss*graph_out['srl']['loss']
         if graph_out['ent']['loss'] is not None:
             final_loss += self.weight_ent_loss*graph_out['ent']['loss']
-#         if graph_out['ans_type']['loss'] is not None:
-#             final_loss += self.weight_ans_type_loss*graph_out['ans_type']['loss']
-        
+     
         return {'loss': final_loss, 
                 'sent': graph_out['sent'], 
                 'ent': graph_out['ent'],
                 'srl': graph_out['srl'],
-#                 'ans_type': graph_out['ans_type'],
                 'span': {'loss': span_loss, 'start_logits': start_logits, 'end_logits': end_logits}}  
     
     def graph_forward(self, graph, bert_context_emb, train):
@@ -958,15 +946,6 @@ scheduler = get_linear_schedule_with_warmup(optimizer,
 #                                                                num_warmup_steps = 0, # Default value in run_glue.py
 #                                                                num_training_steps = total_steps)
 
-
-# # Neptune Config
-
-# %%
-
-
-neptune_token = "eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vdWkubmVwdHVuZS5haSIsImFwaV91cmwiOiJodHRwczovL3VpLm5lcHR1bmUuYWkiLCJhcGlfa2V5IjoiM2ExZDRjYzctODIwOC00YjdjLTkzYmYtN2I3OTgzMTYxNzFlIn0="
-
-
 # %%
 
 
@@ -978,8 +957,7 @@ train_batch_size = 1
 
 import neptune
 neptune.init(
-    "haritz/srl-pred",
-    api_token=neptune_token,
+    "haritz/srl-pred"
 )
 neptune.set_project('haritz/srl-pred')
 PARAMS = {"num_epoch": epochs, 
@@ -1157,7 +1135,7 @@ def exact_match_score(prediction, ground_truth):
 tokenizer = BertTokenizer.from_pretrained(pretrained_weights, do_basic_tokenize=False, clean_text=False)
 
 # %%
-import spacy
+import en_core_web_sm
 
 wh_ans_len = {'which': 25, 'what':25, 'who':20, 'when':10, 'how':15, 'where':15, 'how many': 10, None: 15}
 class Validation():
@@ -1167,7 +1145,7 @@ class Validation():
         self.model = model
         self.model.eval()
         self.dataset = dataset
-        self.nlp = spacy.load('en')
+        self.nlp = en_core_web_sm.load()
         self.validation_dataloader = validation_dataloader
         self.tokenizer = tokenizer
         self.tensor_input_ids = tensor_input_ids
@@ -1311,6 +1289,8 @@ class Validation():
     def __get_st_end_span_idx(self, start_logits, end_logits, max_answer_length = 30):
         start_indexes = self.__get_best_indexes(start_logits, 10)
         end_indexes = self.__get_best_indexes(end_logits, 10)
+        list_candidates = []
+        list_scores = []
         for start_index in start_indexes:
             for end_index in end_indexes:
                 # We could hypothetically create invalid predictions, e.g., predict
@@ -1325,9 +1305,14 @@ class Validation():
                 length = end_index - start_index + 1
                 if length > max_answer_length:
                     continue
-                return (start_index, end_index)
-        return (0, 0)
-    
+                list_scores.append(start_logits[start_index] + end_logits[end_index])
+                list_candidates.append((start_index, end_index))
+        if len(list_scores) == 0:
+            return (0,0)
+        else:
+            best_span_idx = list_scores.index(max(list_scores))
+            return list_candidates[best_span_idx]
+
     def __findWHword(self, sentence):
         candidate = ['when', 'how', 'where', 'which', 'what', 'who', 'how many']
         sentence = sentence.lower()
@@ -1446,9 +1431,8 @@ model_path = '/workspace/ml-workspace/thesis_git/HSGN/models'
 best_eval_em = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="full query edges span fix", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
-    neptune.append_tag(["yes_no span", "bigru initial emb", "bottom-up", "ent relation", "no SRL rel", "Query node", "multihop edges", "residual", "w_yn"])
-    neptune.set_property('server', 'IRGPU2')
+with neptune.create_experiment(name="full span len & n_best spans tokenization fix wh heuristic query edges", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
+    neptune.set_property('server', 'IRGPU11')
     neptune.set_property('training_set_path', training_path)
     neptune.set_property('dev_set_path', dev_path)
 
@@ -1511,7 +1495,6 @@ with neptune.create_experiment(name="full query edges span fix", params=PARAMS, 
             sent_loss = output['sent']['loss']
             ent_loss = output['ent']['loss']
             srl_loss = output['srl']['loss']
-#             ans_type_loss = output['ans_type']['loss']
             span_loss = output['span']['loss']
             # neptune
             neptune.log_metric("total_loss", total_loss.detach().item())
@@ -1523,8 +1506,6 @@ with neptune.create_experiment(name="full query edges span fix", params=PARAMS, 
                 neptune.log_metric("ent_loss", ent_loss.detach().item())
             if span_loss is not None:
                 neptune.log_metric("span_loss", span_loss.detach().item())
-#             if ans_type_loss is not None:
-#                 neptune.log_metric("ans_type_loss", ans_type_loss.detach().item())
 
             # backpropagation
             total_loss.backward()
