@@ -493,6 +493,13 @@ class HeteroRGCN(nn.Module):
             else:
                 nn.init.normal_(param.data)
 
+# %%
+class GeLU(nn.Module):
+    def __init__(self):
+        super(GeLU, self).__init__()
+
+    def forward(self, x):
+        return 0.5 * x * (1 + torch.tanh(math.sqrt(2 / math.pi) * (x + 0.044715 * torch.pow(x, 3))))
 
 # %%
 bert_dim = 768 # default
@@ -500,15 +507,13 @@ if 'large' in pretrained_weights:
     bert_dim = 1024
 dict_params = {'in_feats': bert_dim, 'out_feats': bert_dim, 'feat_drop': 0.1, 'attn_drop': 0.1, 'residual': True, 'hidden_size_classifier': 768,
                'weight_sent_loss': 1, 'weight_srl_loss': 1, 'weight_ent_loss': 1,
-               'weight_span_loss': 2, 'weight_ans_type_loss': 1, 
+               'weight_span_loss': 2, 'weight_ans_type_loss': 1, 'span_drop': 0.1,
                'gat_layers': 2, 'etypes': graph.etypes}
 class HGNModel(BertPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
         self.bert = BertModel(config)
         # graph
-        self.dropout = nn.Dropout(config.hidden_dropout_prob)
-
 #         self.gat = GAT(dict_params['gat_layers'], dict_params['in_feats'], dict_params['in_feats'], dict_params['out_feats'],
 #                            2, feat_drop = dict_params['feat_drop'],
 #                            attn_drop = dict_params['attn_drop'])
@@ -522,21 +527,18 @@ class HGNModel(BertPreTrainedModel):
                                dict_params['residual'])
         ## node classification
         ### ent node
-        self.dropout_ent = nn.Dropout(config.hidden_dropout_prob)
         self.ent_classifier = nn.Sequential(nn.Linear(2*dict_params['out_feats'],
                                                       dict_params['hidden_size_classifier']),
                                             nn.ReLU(),
                                             nn.Linear(dict_params['hidden_size_classifier'],
                                                       2))
         ### srl node
-        self.dropout_srl = nn.Dropout(config.hidden_dropout_prob)
         self.srl_classifier = nn.Sequential(nn.Linear(2*dict_params['out_feats'],
                                                       dict_params['hidden_size_classifier']),
                                             nn.ReLU(),
                                             nn.Linear(dict_params['hidden_size_classifier'],
                                                       2))
         ### sent node
-        self.dropout_sent = nn.Dropout(config.hidden_dropout_prob)
         self.sent_classifier = nn.Sequential(nn.Linear(2*dict_params['out_feats'],
                                                        dict_params['hidden_size_classifier']),
                                             nn.ReLU(),
@@ -545,15 +547,8 @@ class HGNModel(BertPreTrainedModel):
         
         # span prediction
         self.num_labels = config.num_labels
-        self.qa_outputs = nn.Linear(config.hidden_size, config.num_labels)
-
-        # ans type prediction
-#         self.dropout_ans_type = nn.Dropout(config.hidden_dropout_prob)
-#         self.ans_type_classifier = nn.Sequential(nn.Linear(2*dict_params['out_feats'],
-#                                                            int(dict_params['hidden_size_classifier'])),
-#                                                  nn.ReLU(),
-#                                                  nn.Linear(int(dict_params['hidden_size_classifier']),
-#                                                            3))
+        self.qa_outputs = nn.Sequential(nn.Linear(config.hidden_size, self.hidden_size), GeLU(), nn.Dropout(dict_params['span_drop']),
+                                        nn.Linear(self.hidden_size, 2))
         # init weights
         self.init_weights()
         # params
@@ -1431,7 +1426,7 @@ model_path = '/workspace/ml-workspace/thesis_git/HSGN/models'
 best_eval_em = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="full span len & n_best spans tokenization fix wh heuristic query edges", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
+with neptune.create_experiment(name="full 2-layer gelu span pred query edges", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
     neptune.set_property('server', 'IRGPU11')
     neptune.set_property('training_set_path', training_path)
     neptune.set_property('dev_set_path', dev_path)
