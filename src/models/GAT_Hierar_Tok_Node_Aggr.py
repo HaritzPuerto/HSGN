@@ -45,7 +45,7 @@ torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
 # %%
-data_path = "../../data/"
+data_path = "data/"
 hotpot_qa_path = os.path.join(data_path, "external")
 
 with open(os.path.join(hotpot_qa_path, "hotpot_train_v1.1.json"), "r") as f:
@@ -506,7 +506,10 @@ dict_params = {'in_feats': bert_dim, 'out_feats': bert_dim, 'feat_drop': 0.2, 'a
 class HGNModel(BertPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
-        self.bert = AlbertModel(config)
+        if pretrained_weights == 'albert-xxlarge-v2':
+            self.bert = AlbertModel(config)
+        else:
+            self.bert = BertModel(config)
         # Initial Node Embedding
         self.bigru = nn.GRU(input_size=dict_params['in_feats'], hidden_size=dict_params['in_feats'], 
                             num_layers=dict_params['bi_gru_layers'], dropout = dict_params['feat_drop'], bidirectional=True)
