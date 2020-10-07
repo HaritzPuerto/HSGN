@@ -19,6 +19,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from transformers import *
+from transformers import AlbertModel, AlbertTokenizer
 
 import dgl.function as fn
 from dgl.nn.pytorch import edge_softmax, GATConv
@@ -44,7 +45,7 @@ torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
 # %%
-data_path = "/workspace/ml-workspace/thesis_git/HSGN/data/"
+data_path = "../../data/"
 hotpot_qa_path = os.path.join(data_path, "external")
 
 with open(os.path.join(hotpot_qa_path, "hotpot_train_v1.1.json"), "r") as f:
@@ -78,7 +79,7 @@ for idx in set_hard:
 device = 'cuda'
 pretrained_weights = 'bert-base-cased'
 #pretrained_weights = 'bert-large-cased-whole-word-masking'
-
+#pretrained_weights = 'albert-xxlarge-v2'
 # ## HotpotQA Processing
 
 # ## Processing
@@ -496,17 +497,19 @@ class GeLU(nn.Module):
 bert_dim = 768 # default
 if 'large' in pretrained_weights:
     bert_dim = 1024
-dict_params = {'in_feats': bert_dim, 'out_feats': bert_dim, 'feat_drop': 0.1, 'attn_drop': 0.1, 'hidden_size_classifier': 768,
-               'weight_sent_loss': 1, 'weight_srl_loss': 1, 'weight_ent_loss': 1,
-               'weight_span_loss': 2, 'weight_ans_type_loss': 1, 'span_drop': 0.1,
-               'gat_layers': 2, 'etypes': graph.etypes, 'accumulation_steps': 2, 'residual': True,}
+if 'albert-xxlarge-v2' == pretrained_weights:
+    bert_dim = 4096
+dict_params = {'in_feats': bert_dim, 'out_feats': bert_dim, 'feat_drop': 0.2, 'attn_drop': 0.1, 'hidden_size_classifier': bert_dim,
+               'weight_sent_loss': 1, 'weight_srl_loss': 1, 'weight_ent_loss': 1, 'bi_gru_layers': 2,
+               'weight_span_loss': 2, 'weight_ans_type_loss': 1, 'span_drop': 0.2,
+               'gat_layers': 2, 'etypes': graph.etypes, 'accumulation_steps': 1, 'residual': True,}
 class HGNModel(BertPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
-        self.bert = BertModel(config)
+        self.bert = AlbertModel(config)
         # Initial Node Embedding
-        self.bigru = nn.GRU(dict_params['in_feats'], dict_params['in_feats'], 
-                                    dropout = dict_params['feat_drop'], bidirectional=True)
+        self.bigru = nn.GRU(input_size=dict_params['in_feats'], hidden_size=dict_params['in_feats'], 
+                            num_layers=dict_params['bi_gru_layers'], dropout = dict_params['feat_drop'], bidirectional=True)
         self.gru_aggregation = nn.Linear(2*dict_params['in_feats'], dict_params['in_feats'])
         self.node_norm = NodeNorm()
         # Graph Neural Network
@@ -870,6 +873,7 @@ model.cuda()
 # 
 
 # %%
+# model.train()
 # for step, b_graph in enumerate(tqdm(list_graphs)):
 #     model.zero_grad()
 #     # forward
@@ -884,6 +888,12 @@ model.cuda()
 #                    token_type_ids=token_type_ids, 
 #                    start_positions=start_positions,
 #                    end_positions=end_positions)
+#     total_loss = output['loss']
+#     total_loss.backward()
+#     torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+#     optimizer.step()
+#     scheduler.step()
+#     model.zero_grad()
 
 # %%
 train_dataloader = list_graphs
@@ -1105,7 +1115,7 @@ def exact_match_score(prediction, ground_truth):
 
 
 # %%
-tokenizer = BertTokenizer.from_pretrained(pretrained_weights, do_basic_tokenize=False, clean_text=False)
+tokenizer = AlbertTokenizer.from_pretrained(pretrained_weights, do_basic_tokenize=False, clean_text=False)
 
 # %%
 import en_core_web_sm
@@ -1399,12 +1409,12 @@ def record_eval_metric(neptune, metrics):
 
 
 # %%
-model_path = '/workspace/ml-workspace/thesis_git/HSGN/models'
+model_path = 'models'
 
 best_eval_em = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="full 2-layer gelu span pred query edges", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
+with neptune.create_experiment(name="full base 2-layer gelu span pred + regularization query edges", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
     neptune.set_property('server', 'IRGPU11')
     neptune.set_property('training_set_path', training_path)
     neptune.set_property('dev_set_path', dev_path)
@@ -1433,6 +1443,7 @@ with neptune.create_experiment(name="full 2-layer gelu span pred query edges", p
             random.shuffle(list_idx_curriculum_learning)
         # For each batch of training data...
         for step, idx in enumerate(tqdm(list_idx_curriculum_learning)):
+            idx = step
             b_graph = list_graphs[idx]
             neptune.log_metric('step', step)
             # forward
