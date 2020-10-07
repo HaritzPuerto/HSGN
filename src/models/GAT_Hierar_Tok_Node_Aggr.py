@@ -1118,7 +1118,10 @@ def exact_match_score(prediction, ground_truth):
 
 
 # %%
-tokenizer = AlbertTokenizer.from_pretrained(pretrained_weights, do_basic_tokenize=False, clean_text=False)
+if pretrained_weights == 'albert-xxlarge-v2':
+    tokenizer = AlbertTokenizer.from_pretrained(pretrained_weights, do_basic_tokenize=False, clean_text=False)
+else:
+    tokenizer = BertTokenizer.from_pretrained(pretrained_weights, do_basic_tokenize=False, clean_text=False)
 
 # %%
 import en_core_web_sm
