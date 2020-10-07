@@ -26,7 +26,7 @@ torch.cuda.manual_seed_all(random_seed)
 device = 'cuda'
 pretrained_weights = 'bert-base-cased'
 
-data_path = '/workspace/ml-workspace/thesis_git/HSGN/data/'
+data_path = './data/'
 hotpotqa_path = 'external/'
 intermediate_train_data_path = 'interim/training/'
 intermediate_dev_data_path = 'interim/dev/'
@@ -790,22 +790,31 @@ class Dataset():
                                                                              list_srl_rel)
         dict_edges = {
                      #('sent', 'sent2doc', 'doc'): list_sent2doc,  # lbl: [SENT2DOC]
-                     ('srl', 'srl2sent', 'sent'): list_srl2sent,  # lbl: [SRL2SENT]
+                     
                      # to token
-                     ('srl', 'srl2tok', 'tok'): list_srl2tok,     # lbl: [SRL2TOK]
+                     
                      # end hierarchical
                      # same-level edges
                      #('doc', 'self_doc2doc', 'doc'): list_doc2doc,         # lbl: [DOC2DOC_SELF]
-                     ('sent', 'sent2sent', 'sent'): list_sent2sent,   # lbl: [SENT2SENT]
-                     ('sent', 'self_sent2sent', 'sent'): list_self_sent2sent, # lbl: [SENT2SENT_SELF]
-                     ('srl', 'srl2srl', 'srl'): list_srl2srl,         # lbl: [SRL2SRL]
-                     ('srl', 'self_srl2srl', 'srl'): list_srl2self,         # lbl: [SRL2SELF]
-                     ('tok', 'self_tok2tok', 'tok'): list_token2token, # lbl: [TOK2TOK_SELF]
+                     
                      # multi-hop edges
-                     ('srl', 'mh_srl2srl', 'srl'): list_srl_multihop,
-                     ('sent', 'mh_sent2sent', 'sent'): list_sent_multihop,
+                     
                      ('query', 'self_query2query', 'query'): [(0,0)]
                     }
+        if list_srl2sent != []:
+            dict_edges[('srl', 'srl2sent', 'sent')] = list_srl2sent # lbl: [SRL2SENT]
+        if list_srl2tok != []:
+            dict_edges[('srl', 'srl2tok', 'tok')] = list_srl2tok # lbl: [SRL2TOK]
+        if list_sent2sent != []:
+            dict_edges[('sent', 'sent2sent', 'sent')] = list_sent2sent   # lbl: [SENT2SENT]
+        if list_self_sent2sent != []:
+            dict_edges[('sent', 'self_sent2sent', 'sent')] = list_self_sent2sent # lbl: [SENT2SENT_SELF]
+        if list_srl2srl   != []:
+            dict_edges[('srl', 'srl2srl', 'srl')] = list_srl2srl         # lbl: [SRL2SRL]
+        if list_srl2self != []:
+            dict_edges[('srl', 'self_srl2srl', 'srl')] = list_srl2self         # lbl: [SRL2SELF]
+        if list_token2token != []:
+            dict_edges[('tok', 'self_tok2tok', 'tok')] = list_token2token # lbl: [TOK2TOK_SELF]
         if list_ent2srl != []:
             dict_edges[('ent', 'ent2srl', 'srl')] = list_ent2srl     # lbl: [ENT2SRL]
         if list_ent2tok != []:
@@ -830,6 +839,10 @@ class Dataset():
             dict_edges[('srl', 'query_srl2srl', 'srl')] = list_q_srl2srl
         if list_query2sent_pred != []:
             dict_edges['query', 'query2sent', 'sent'] = list_query2sent_pred
+        if list_srl_multihop != []:
+            dict_edges[('srl', 'mh_srl2srl', 'srl')] = list_srl_multihop
+        if list_sent_multihop != []:
+            dict_edges[('sent', 'mh_sent2sent', 'sent')] = list_sent_multihop
         graph = dgl.heterograph(dict_edges)
         graph_metadata = dict()
         # doc metadata
@@ -1155,7 +1168,7 @@ for g_idx, list_dict_edge in enumerate(list_list_ent2ent_metadata):
         list_graphs[g_idx].edges['ent_rel2ent'].data['rel_type'] = torch.tensor([edge['rel_type'] for edge in list_dict_edge])
         list_graphs[g_idx].edges['ent_rel2ent'].data['span_idx'] = torch.tensor([edge['span_idx'] for edge in list_dict_edge])
 # %%
-training_path = os.path.join(data_path, 'processed/training/heterog_20200924_hierarchical_node_aggr')
+training_path = os.path.join(data_path, 'processed/training/heterog_20201003_hierarchical_node_aggr')
 training_graph_path = os.path.join(training_path, 'graphs')
 training_metadata_path = os.path.join(training_path, 'metadata')
 
@@ -1243,7 +1256,7 @@ tensor_token_type_ids = torch.tensor(list_token_type_ids)
 tensor_attention_masks = torch.tensor(list_attention_masks)
 
 # %%
-dev_path = os.path.join(data_path, 'processed/dev/heterog_20200924_hierarchical_node_aggr')
+dev_path = os.path.join(data_path, 'processed/dev/heterog_20201003_hierarchical_node_aggr')
 dev_graph_path = os.path.join(dev_path, 'graphs')
 dev_metadata_path = os.path.join(dev_path, 'metadata')
 

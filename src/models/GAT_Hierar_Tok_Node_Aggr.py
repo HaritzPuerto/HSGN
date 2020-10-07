@@ -60,8 +60,8 @@ pretrained_weights = 'bert-base-cased'
 # ## Processing
 
 # %%
-training_path = os.path.join(data_path, "processed/training/heterog_20200924_hierarchical_node_aggr/")
-dev_path = os.path.join(data_path, "processed/dev/heterog_20200924_hierarchical_node_aggr/")
+training_path = os.path.join(data_path, "processed/training/heterog_20201003_hierarchical_node_aggr/")
+dev_path = os.path.join(data_path, "processed/dev/heterog_20201003_hierarchical_node_aggr/")
 
 with open(os.path.join(training_path, 'list_span_idx.p'), 'rb') as f:
     list_span_idx = pickle.load(f)
@@ -289,7 +289,7 @@ class HeteroRGCNLayer(nn.Module):
 
         self.common_space_trans = nn.Linear(in_size, out_size)
        
-        self.gru_node2tok = nn.GRU(in_size, out_size, num_layers=2, dropout=feat_drop)
+        self.gru_node2tok = nn.GRU(in_size, out_size, num_layers=3, dropout=feat_drop)
         self.reduction_mlp = nn.Linear(in_size * 2, out_size)
         self.feat_drop = nn.Dropout(feat_drop)
         self.attn_drop = nn.Dropout(attn_drop)
@@ -400,102 +400,130 @@ class HeteroRGCNLayer(nn.Module):
 
     def __query_aggregation(self, graph):
         h_self_query = graph.nodes['query'].data.pop('self_query').view(1,-1,self.in_size)
+        assert not torch.isnan(h_self_query).any()
         gru_input = []
         if 'mh_sent' in graph.nodes['query'].data:
             h_mh_sent = graph.nodes['query'].data.pop('mh_sent').view(1,-1,self.in_size) # 2 sent share an entity
+            assert not torch.isnan(h_mh_sent).any()
             gru_input.append(h_mh_sent)
         if 'srl' in graph.nodes['query'].data:
             h_srl = graph.nodes['query'].data.pop('srl').view(1,-1,self.in_size) # 2 sent share an entity
+            assert not torch.isnan(h_srl).any()
             gru_input.append(h_srl)
         if len(gru_input) > 0:
             gru_input = torch.cat(gru_input)
-            neighbors = self.gru_node2tok(gru_input, torch.cat((h_self_query, h_self_query)))[0][-1]
+            neighbors = self.gru_node2tok(gru_input)[0][-1]
+            assert not torch.isnan(neighbors).any()
             reduction_input = torch.cat((h_self_query.view(-1, self.in_size), neighbors), dim=1)
             graph.nodes['query'].data['h'] = F.leaky_relu(self.reduction_mlp(reduction_input))
 
     def __sent_aggregation(self, graph):
         h_self_sent = graph.nodes['sent'].data.pop('self_sent').view(1,-1,self.in_size)
+        assert not torch.isnan(h_self_sent).any()
         gru_input = []
 
         if 'query' in graph.nodes['sent'].data:
             h_query = graph.nodes['sent'].data.pop('query').view(1,-1,self.in_size) # query is connected to each sentence to foster the sp prediction
+            assert not torch.isnan(h_query).any()
             gru_input.append(h_query)
         if 'mh_query' in graph.nodes['sent'].data:
             h_mh_query = graph.nodes['sent'].data.pop('mh_query').view(1,-1,self.in_size) # query and sentence share a entity
+            assert not torch.isnan(h_mh_query).any()
             gru_input.append(h_mh_query)
         if 'sent' in graph.nodes['sent'].data:
             h_sent = graph.nodes['sent'].data.pop('sent').view(1,-1,self.in_size)
+            assert not torch.isnan(h_sent).any()
             gru_input.append(h_sent)
         if 'mh_sent' in graph.nodes['sent'].data:
             h_mh_sent = graph.nodes['sent'].data.pop('mh_sent').view(1,-1,self.in_size) # 2 sent share an entity
+            assert not torch.isnan(h_mh_sent).any()
             gru_input.append(h_mh_sent)
         if 'srl' in graph.nodes['sent'].data:
             h_srl = graph.nodes['sent'].data.pop('srl').view(1,-1,self.in_size)
+            assert not torch.isnan(h_srl).any()
             gru_input.append(h_srl)
         
         if len(gru_input) > 0:
             gru_input = torch.cat(gru_input)
-            neighbors = self.gru_node2tok(gru_input, torch.cat((h_self_sent,h_self_sent)))[0][-1]
+            neighbors = self.gru_node2tok(gru_input)[0][-1]
+            assert not torch.isnan(neighbors).any()
             reduction_input = torch.cat((h_self_sent.view(-1, self.in_size), neighbors), dim=1)
             graph.nodes['sent'].data['h'] = F.leaky_relu(self.reduction_mlp(reduction_input))
 
     def __srl_aggregation(self, graph):
         h_self_srl = graph.nodes['srl'].data.pop('self_srl').view(1,-1,self.in_size)
+        assert not torch.isnan(h_self_srl).any()
         gru_input = []
         if 'srl_loc' in graph.nodes['srl'].data:
             h_loc = graph.nodes['srl'].data.pop('srl_loc').view(1,-1,self.in_size)
+            assert not torch.isnan(h_loc).any()
             gru_input.append(h_loc)
         if 'srl_tmp' in graph.nodes['srl'].data:
             h_tmp = graph.nodes['srl'].data.pop('srl_tmp').view(1,-1,self.in_size)
+            assert not torch.isnan(h_tmp).any()
             gru_input.append(h_tmp)
         if 'query_srl' in graph.nodes['srl'].data:
             h_srl_query = graph.nodes['srl'].data.pop('query_srl').view(1,-1,self.in_size)
+            assert not torch.isnan(h_srl_query).any()
             gru_input.append(h_srl_query)
         if 'srl' in graph.nodes['srl'].data:
             # srl argument in a argument in the same triple
             h_srl = graph.nodes['srl'].data.pop('srl').view(1,-1,self.in_size)
+            assert not torch.isnan(h_srl).any()
             gru_input.append(h_srl)
         if 'mh_srl' in graph.nodes['srl'].data:
             h_srl_mh = graph.nodes['srl'].data.pop('mh_srl').view(1,-1,self.in_size) # same srl in another sentence
+            assert not torch.isnan(h_srl_mh).any()
             gru_input.append(h_srl_mh)
         if 'ent' in graph.nodes['srl'].data:
             h_ent = graph.nodes['srl'].data.pop('ent').view(1,-1,self.in_size)
+            assert not torch.isnan(h_ent).any()
             gru_input.append(h_ent)
         
         if len(gru_input) > 0:
             gru_input = torch.cat(gru_input)
-            neighbors = self.gru_node2tok(gru_input, torch.cat((h_self_srl, h_self_srl)))[0][-1]
+            assert not torch.isnan(gru_input).any()
+            neighbors = self.gru_node2tok(gru_input)[0][-1]
+            assert not torch.isnan(neighbors).any()
             reduction_input = torch.cat((h_self_srl.view(-1,self.in_size), neighbors), dim=1)
             graph.nodes['srl'].data['h'] = F.leaky_relu(self.reduction_mlp(reduction_input))
 
     def __ent_aggregation(self, graph):
         h_self_ent = graph.nodes['ent'].data.pop('self_ent').view(1,-1,self.in_size)
+        assert not torch.isnan(h_self_ent).any()
         gru_input = []
         if 'ent_rel' in graph.nodes['ent'].data:
             h_ent_rel = graph.nodes['ent'].data.pop('ent_rel').view(1,-1,self.in_size)
+            assert not torch.isnan(h_ent_rel).any()
             gru_input.append(h_ent_rel)
         if 'mh_ent' in graph.nodes['ent'].data:
             h_mh_ent = graph.nodes['ent'].data.pop('mh_ent').view(1,-1,self.in_size)
+            assert not torch.isnan(h_mh_ent).any()
             gru_input.append(h_mh_ent)
         if len(gru_input) > 0:
             gru_input = torch.cat(gru_input)
-            neighbors = self.gru_node2tok(gru_input, torch.cat((h_self_ent, h_self_ent)))[0][-1]
+            neighbors = self.gru_node2tok(gru_input)[0][-1]
+            assert not torch.isnan(neighbors).any()
             reduction_input = torch.cat((h_self_ent.view(-1,self.in_size), neighbors), dim=1)
             graph.nodes['ent'].data['h'] = F.leaky_relu(self.reduction_mlp(reduction_input))
 
     def __tok_aggregation(self, graph):
         h_tok = graph.nodes['tok'].data.pop('self_tok').view(1,-1,self.in_size)
+        assert not torch.isnan(h_tok).any()
         gru_input = []
         if 'srl' in graph.nodes['tok'].data:
             h_srl = graph.nodes['tok'].data.pop('srl').view(1,-1,self.in_size)
+            assert not torch.isnan(h_srl).any()
             gru_input.append(h_srl)
         if 'ent' in graph.nodes['tok'].data:
             # there can be an instance without entities (not common though)
             h_ent = graph.nodes['tok'].data.pop('ent').view(1,-1,self.in_size)
+            assert not torch.isnan(h_ent).any()
             gru_input.append(h_ent)
         if len(gru_input) > 0:
             gru_input = torch.cat(gru_input)
-            neighbors = self.gru_node2tok(gru_input, torch.cat((h_tok, h_tok)))[0][-1]
+            neighbors = self.gru_node2tok(gru_input)[0][-1]
+            assert not torch.isnan(neighbors).any()
             reduction_input = torch.cat((h_tok.view(-1,self.in_size), neighbors), dim=1)
             graph.nodes['tok'].data['h'] = F.leaky_relu(self.reduction_mlp(reduction_input))
 
@@ -507,19 +535,22 @@ class HeteroRGCNLayer(nn.Module):
         for srctype, etype, dsttype in G.canonical_etypes:
             if 'h' not in G.nodes[srctype].data:
                 G.nodes[srctype].data['h'] = self.feat_drop(feat_dict[srctype])
+                assert not torch.isnan(G.nodes[srctype].data['h']).any()
             if 'h' not in G.nodes[dsttype].data:
                 G.nodes[dsttype].data['h'] = self.feat_drop(feat_dict[dsttype])
+                assert not torch.isnan(G.nodes[dsttype].data['h']).any()
             if self.residual and 'resid' not in G.nodes[srctype].data:
                 G.nodes[srctype].data['resid'] = feat_dict[srctype]
+                assert not torch.isnan(G.nodes[srctype].data['resid']).any()
             if self.residual and 'resid' not in G.nodes[dsttype].data:
                 G.nodes[dsttype].data['resid'] = feat_dict[dsttype]
+                assert not torch.isnan(G.nodes[dsttype].data['resid']).any()
             
             src_name = etype.split("2")[0]
             if "ent_rel2ent" == etype:
-                funcs[etype] = ((lambda e: self.message_func_rel(bert_token_emb, e)) , functools.partial(self.reduce_fn, src_name))
+                G[etype].update_all(functools.partial(self.message_func_rel, bert_token_emb), fn.sum('m', src_name))
             else:
-                funcs[etype] = (self.transform_src, functools.partial(self.reduce_fn, src_name))
-        G.multi_update_all(funcs, 'stack')
+                G[etype].update_all(self.transform_src, fn.sum('m', src_name))            
         ## update tokens
         self.hierarchical_aggregation(G)
 
@@ -578,7 +609,6 @@ class HeteroRGCN(nn.Module):
         
         h_dict = self.layer1(G, emb, bert_token_emb)
         h_tok1 = h_dict['tok'].view(1,-1,self.in_size)
-        h_dict = {k : F.leaky_relu(h) for k, h in h_dict.items()}
         
         h_dict = self.layer2(G, h_dict, bert_token_emb)
         h_tok2 = h_dict['tok'].view(1,-1,self.in_size)
@@ -985,6 +1015,7 @@ model.cuda()
 # 
 
 # %%
+# model.train()
 # for step, b_graph in enumerate(tqdm(list_graphs)):
 #     model.zero_grad()
 #     # forward
@@ -999,6 +1030,23 @@ model.cuda()
 #                    token_type_ids=token_type_ids, 
 #                    start_positions=start_positions,
 #                    end_positions=end_positions)
+
+#     total_loss = output['loss']
+#     sent_loss = output['sent']['loss']
+#     ent_loss = output['ent']['loss']
+#     srl_loss = output['srl']['loss']
+# #             ans_type_loss = output['ans_type']['loss']
+#     span_loss = output['span']['loss']
+            
+#     # backpropagation
+#     total_loss.backward()
+#     torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+#     optimizer.step()
+#     scheduler.step()
+#     for w in list(model.rgcn.layer1.gru_node2tok.parameters()):
+#         assert not w.isnan().any()
+#     for w in list(model.rgcn.layer2.gru_node2tok.parameters()):
+#         assert not w.isnan().any()
 
 # %%
 lr = 1e-5
@@ -1399,7 +1447,7 @@ model_path = 'models'
 best_eval_f1 = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="NO SUM lstm + mlp aggr. 2 layers & dropout", params=PARAMS, upload_source_files=['./src/models/GAT_Hierar_Tok_Node_Aggr.py']):
+with neptune.create_experiment(name="no multi-update & GRU + mlp aggr. 3 layers & dropout", params=PARAMS, upload_source_files=['./src/models/GAT_Hierar_Tok_Node_Aggr.py']):
     neptune.set_property('server', 'nipa')
     neptune.set_property('training_set_path', training_path)
     neptune.set_property('dev_set_path', dev_path)
