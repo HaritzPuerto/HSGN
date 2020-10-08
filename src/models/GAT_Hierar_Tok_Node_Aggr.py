@@ -1241,10 +1241,41 @@ class Validation():
                 'ent': output_ent, 'srl': output_srl}
     
     def __get_pred_ans_str(self, input_ids, output, max_ans_len):
+        if 'srl' in graph.ntypes:
+            list_srl_nodes = torch.topk(output['srl']['probs'][:,1], 5)[1]
+            list_srl_spans = graph.nodes['srl'].data['st_end_idx'][list_srl_nodes]
         st, end = self.__get_st_end_span_idx(output['span']['start_logits'].squeeze(),
                                              output['span']['end_logits'].squeeze(), max_ans_len)
         return self.__get_str_span(input_ids, st, end)
     
+    def __ans_span_in_srl_span(self, list_srl_spans, start_logits, end_logits, max_answer_length = 30):
+        list_scores = []
+        list_candidates = []
+        for (st, end) in list_srl_spans:
+            list_scores_in_srl = []
+            list_candidates_in_srl = []
+            for i in range(st, end):
+                for j in range(st+1, end):
+                    if i >= 512:
+                        continue
+                    if join() >= 512:
+                        continue
+                    if j < i:
+                        continue
+                    length = j - i + 1
+                    if length > max_answer_length:
+                        continue
+                    list_scores_in_srl.append(start_logits[i] + end_logits[j])
+                    list_candidates_in_srl.append((start_index, end_index))
+            if len(list_scores_in_srl) != 0:
+                best_span_idx = list_scores_in_srl.index(max(list_scores_in_srl))
+                list_candidates.append(list_candidates_in_srl[best_span_idx])
+                list_scores.append(max(list_scores_in_srl))
+        score = max(list_scores)
+        best_span_idx = list_scores.index(score)
+        span = list_candidates[best_span_idx]
+        return span
+
     def __get_ent_str(self, graph, input_ids, output):
         if 'ent' in graph.ntypes:
             ent_node = torch.argmax(output['ent']['probs'][:,1]).item()
