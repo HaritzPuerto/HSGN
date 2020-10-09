@@ -500,7 +500,7 @@ if 'large' in pretrained_weights:
 if 'albert-xxlarge-v2' == pretrained_weights:
     bert_dim = 4096
 dict_params = {'in_feats': bert_dim, 'out_feats': bert_dim, 'feat_drop': 0.2, 'attn_drop': 0.1, 'hidden_size_classifier': bert_dim,
-               'weight_sent_loss': 1, 'weight_srl_loss': 1, 'weight_ent_loss': 1, 'bi_gru_layers': 2,
+               'weight_sent_loss': 1, 'weight_srl_loss': 1, 'weight_ent_loss': 1, 'bi_gru_layers': 1,
                'weight_span_loss': 2, 'weight_ans_type_loss': 1, 'span_drop': 0.2,
                'gat_layers': 2, 'etypes': graph.etypes, 'accumulation_steps': 1, 'residual': True,}
 class HGNModel(BertPreTrainedModel):
