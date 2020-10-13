@@ -45,7 +45,7 @@ torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
 # %%
-data_path = "data/"
+data_path = "../../data/"
 hotpot_qa_path = os.path.join(data_path, "external")
 
 with open(os.path.join(hotpot_qa_path, "hotpot_train_v1.1.json"), "r") as f:
@@ -85,8 +85,8 @@ pretrained_weights = 'bert-base-cased'
 # ## Processing
 
 # %%
-training_path = os.path.join(data_path, "processed/training/heterog_20201004_query_edges/")
-dev_path = os.path.join(data_path, "processed/dev/heterog_20201004_query_edges/")
+training_path = os.path.join(data_path, "processed/training/heterog_20201013_query_edges_no_srl/")
+dev_path = os.path.join(data_path, "processed/dev/heterog_20201013_query_edges_no_srl/")
 
 with open(os.path.join(training_path, 'list_span_idx.p'), 'rb') as f:
     list_span_idx = pickle.load(f)
@@ -137,7 +137,7 @@ list_metadata_files = natural_sort([f for f in listdir(training_metadata_path) i
 list_graph_metadata_files = list(zip(list_graph_files, list_metadata_files))
 
 list_graphs = []
-for (g_file, metadata_file) in tqdm(list_graph_metadata_files):
+for (g_file, metadata_file) in tqdm(list_graph_metadata_files[0:10]):
     if ".bin" in g_file:
         with open(os.path.join(training_graphs_path, g_file), "rb") as f:
             graph = pickle.load(f)
@@ -389,24 +389,25 @@ class HeteroRGCNLayer(nn.Module):
                 pass
             elif "ent2ent_rel" == etype:
                 funcs[etype] = ((lambda e: self.message_func_rel(bert_token_emb, e)) , self.reduce_func)
-            elif "sent2at" == etype:
-                funcs[etype] = (self.message_func_AT_node, self.reduce_func)
             else:
                 funcs[etype] = (self.message_func_regular_node, self.reduce_func)
         G.multi_update_all(funcs, 'sum')
         ## update tokens
-        G['srl2tok'].update_all(self.message_func_2tok, fn.sum('m', 'h_srl'))
+        if 'srl' in G.ntypes:
+            G['srl2tok'].update_all(self.message_func_2tok, fn.sum('m', 'h_srl'))
         if 'ent' in G.ntypes:
             G['ent2tok'].update_all(self.message_func_2tok, fn.sum('m', 'h_ent'))
         #batched all tokens since we want to put into the GRU (srl, ent, hidden=tok) so batch size = 512
         h_tok = G.nodes['tok'].data['h'].view(1,-1,self.in_size)
-        h_srl = G.nodes['tok'].data.pop('h_srl').view(1,-1,self.in_size)
-        gru_input = h_srl
+        gru_input = h_tok
+        if 'h_srl' in G.nodes['tok'].data:
+            h_srl = G.nodes['tok'].data.pop('h_srl').view(1,-1,self.in_size)
+            gru_input = h_srl
         if 'h_ent' in G.nodes['tok'].data:
             # there can be an instance without entities (not common anyway)
             h_ent = G.nodes['tok'].data.pop('h_ent').view(1,-1,self.in_size)
             gru_input = torch.cat((h_ent, h_tok), dim=0)            
-        G.nodes['tok'].data['h'] = self.gru_node2tok(gru_input, h_srl)[0][-1]
+        G.nodes['tok'].data['h'] = self.gru_node2tok(gru_input)[0][-1]
 
         out = None
         if self.residual:
@@ -527,11 +528,11 @@ class HGNModel(BertPreTrainedModel):
                                             nn.Linear(dict_params['hidden_size_classifier'],
                                                       2))
         ### srl node
-        self.srl_classifier = nn.Sequential(nn.Linear(2*dict_params['out_feats'],
-                                                      dict_params['hidden_size_classifier']),
-                                            nn.ReLU(),
-                                            nn.Linear(dict_params['hidden_size_classifier'],
-                                                      2))
+        # self.srl_classifier = nn.Sequential(nn.Linear(2*dict_params['out_feats'],
+        #                                               dict_params['hidden_size_classifier']),
+        #                                     nn.ReLU(),
+        #                                     nn.Linear(dict_params['hidden_size_classifier'],
+        #                                               2))
         ### sent node
         self.sent_classifier = nn.Sequential(nn.Linear(2*dict_params['out_feats'],
                                                        dict_params['hidden_size_classifier']),
@@ -591,15 +592,15 @@ class HGNModel(BertPreTrainedModel):
             final_loss += self.weight_span_loss*span_loss
         if graph_out['sent']['loss'] is not None:
             final_loss += self.weight_sent_loss*graph_out['sent']['loss']
-        if graph_out['srl']['loss'] is not None:
-            final_loss += self.weight_srl_loss*graph_out['srl']['loss']
+        # if graph_out['srl']['loss'] is not None:
+        #     final_loss += self.weight_srl_loss*graph_out['srl']['loss']
         if graph_out['ent']['loss'] is not None:
             final_loss += self.weight_ent_loss*graph_out['ent']['loss']
      
         return {'loss': final_loss, 
                 'sent': graph_out['sent'], 
                 'ent': graph_out['ent'],
-                'srl': graph_out['srl'],
+                # 'srl': graph_out['srl'],
                 'span': {'loss': span_loss, 'start_logits': start_logits, 'end_logits': end_logits}}  
     
     def graph_forward(self, graph, bert_context_emb, train):
@@ -609,12 +610,13 @@ class HGNModel(BertPreTrainedModel):
             assert not torch.isnan(v).any()
         # graph_emb shape [num_nodes, in_feats]    
         sample_sent_nodes = self.sample_sent_nodes(graph)
-        sample_srl_nodes = self.sample_srl_nodes(graph)
+        #sample_srl_nodes = self.sample_srl_nodes(graph)
+        sample_srl_nodes = []
         sample_ent_nodes = self.sample_ent_nodes(graph)
         initial_graph_emb = graph_emb # for skip-connection
         
         # update graph embedding #
-        graph_emb = self.rgcn(graph, graph_emb, bert_context_emb[0])
+        #graph_emb = self.rgcn(graph, graph_emb, bert_context_emb[0])
         
         # graph_emb shape [num_nodes, num_heads, in_feats] num_heads = 1
 #         graph_emb = graph_emb.view(-1, dict_params['out_feats'])
@@ -630,16 +632,16 @@ class HGNModel(BertPreTrainedModel):
             assert not torch.isnan(logits_sent).any() 
             
             # contains the indexes of the srl nodes
-            if len(sample_srl_nodes) == 0:
-                logits_srl = None
-                srl_labels = None
-            else:
-                logits_srl = self.srl_classifier(torch.cat((graph_emb['srl'][sample_srl_nodes],
-                                                            initial_graph_emb['srl'][sample_srl_nodes]), dim=1))
-                # shape [num_ent_nodes, 2] 
-                assert not torch.isnan(logits_srl).any()
-                srl_labels = graph.nodes['srl'].data['labels'][sample_srl_nodes].to(device)
-                # shape [num_sampled_srl_nodes, 1]
+            # if len(sample_srl_nodes) == 0:
+            #     logits_srl = None
+            #     srl_labels = None
+            # else:
+            #     logits_srl = self.srl_classifier(torch.cat((graph_emb['srl'][sample_srl_nodes],
+            #                                                 initial_graph_emb['srl'][sample_srl_nodes]), dim=1))
+            #     # shape [num_ent_nodes, 2] 
+            #     assert not torch.isnan(logits_srl).any()
+            #     srl_labels = graph.nodes['srl'].data['labels'][sample_srl_nodes].to(device)
+            #     # shape [num_sampled_srl_nodes, 1]
             
             # contains the indexes of the ent nodes
             if len(sample_ent_nodes) == 0:
@@ -661,10 +663,10 @@ class HGNModel(BertPreTrainedModel):
             logits_sent = self.sent_classifier(torch.cat((graph_emb['sent'],
                                                           initial_graph_emb['sent']), dim=1))
             assert not torch.isnan(logits_sent).any()
-            logits_srl = self.srl_classifier(torch.cat((graph_emb['srl'],
-                                                        initial_graph_emb['srl']), dim=1))
-            # shape [num_ent_nodes, 2] 
-            assert not torch.isnan(logits_srl).any()
+            # logits_srl = self.srl_classifier(torch.cat((graph_emb['srl'],
+            #                                             initial_graph_emb['srl']), dim=1))
+            # # shape [num_ent_nodes, 2] 
+            # assert not torch.isnan(logits_srl).any()
             logits_ent = None
             ent_labels = None
             if 'ent' in graph.ntypes:
@@ -678,7 +680,7 @@ class HGNModel(BertPreTrainedModel):
             # labels
             sent_labels = graph.nodes['sent'].data['labels'].to(device)
             # shape [num_sent_nodes, 1]
-            srl_labels = graph.nodes['srl'].data['labels'].to(device)
+            # srl_labels = graph.nodes['srl'].data['labels'].to(device)
             # shape [num_sampled_srl_nodes, 1]
             
            
@@ -687,16 +689,16 @@ class HGNModel(BertPreTrainedModel):
         probs_sent = F.softmax(logits_sent, dim=1).cpu()
         # shape [num_sent_nodes, 2]
         
-        # srl loss
-        loss_srl = None # not all ans are inside an srl arg
-        probs_ent = torch.tensor([], device=device)
-        if logits_srl is None:
-            loss_srl = None
-            probs_srl = None
-        else:
-            loss_srl = loss_fn(logits_srl, srl_labels.view(-1).long())
-            probs_srl = F.softmax(logits_srl, dim=1).cpu()
-            # shape [num_srl_nodes, 2]
+        # # srl loss
+        # loss_srl = None # not all ans are inside an srl arg
+        # probs_ent = torch.tensor([], device=device)
+        # if logits_srl is None:
+        #     loss_srl = None
+        #     probs_srl = None
+        # else:
+        #     loss_srl = loss_fn(logits_srl, srl_labels.view(-1).long())
+        #     probs_srl = F.softmax(logits_srl, dim=1).cpu()
+        #     # shape [num_srl_nodes, 2]
 
         # ent loss
         loss_ent = None # not all ans are an entity
@@ -711,13 +713,13 @@ class HGNModel(BertPreTrainedModel):
 
         # labels to cpu
         sent_labels = sent_labels.cpu().view(-1)
-        if srl_labels is not None:
-            srl_labels = srl_labels.cpu().view(-1)
+        # if srl_labels is not None:
+        #     srl_labels = srl_labels.cpu().view(-1)
         if ent_labels is not None:
             ent_labels = ent_labels.cpu().view(-1)
 
         return ({'sent': {'loss': loss_sent, 'probs': probs_sent, 'lbl': sent_labels},
-                'srl': {'loss': loss_srl, 'probs': probs_srl, 'lbl': srl_labels},
+                # 'srl': {'loss': loss_srl, 'probs': probs_srl, 'lbl': srl_labels},
                 'ent': {'loss': loss_ent, 'probs': probs_ent, 'lbl': ent_labels},
                 },
                 graph_emb)
@@ -876,15 +878,21 @@ model.cuda()
 # 
 
 # %%
-# model.train()
-# for step, b_graph in enumerate(tqdm(list_graphs)):
-#     model.zero_grad()
-#     # forward
-#     input_ids=tensor_input_ids[step].unsqueeze(0).to(device)
-#     attention_mask=tensor_attention_masks[step].unsqueeze(0).to(device)
-#     token_type_ids=tensor_token_type_ids[step].unsqueeze(0).to(device) 
-#     start_positions=torch.tensor([list_span_idx[step][0]], device='cuda')
-#     end_positions=torch.tensor([list_span_idx[step][1]], device='cuda')
+model.train()
+for step, b_graph in enumerate(tqdm(list_graphs[1:4])):
+    model.zero_grad()
+    # forward
+    input_ids=tensor_input_ids[step].unsqueeze(0).to(device)
+    attention_mask=tensor_attention_masks[step].unsqueeze(0).to(device)
+    token_type_ids=tensor_token_type_ids[step].unsqueeze(0).to(device) 
+    start_positions=torch.tensor([list_span_idx[step][0]], device='cuda')
+    end_positions=torch.tensor([list_span_idx[step][1]], device='cuda')
+    outputs = model.bert(
+            input_ids=input_ids,
+                   attention_mask=attention_mask,
+                   token_type_ids=token_type_ids, 
+                   
+        )
 #     output = model(b_graph,
 #                    input_ids=input_ids,
 #                    attention_mask=attention_mask,
@@ -897,6 +905,9 @@ model.cuda()
 #     optimizer.step()
 #     scheduler.step()
 #     model.zero_grad()
+
+# %%
+output
 
 # %%
 train_dataloader = list_graphs
@@ -1420,7 +1431,7 @@ model_path = 'models'
 best_eval_em = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="full base 2-layer gelu span pred + regularization query edges", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
+with neptune.create_experiment(name="495 - SRL", params=PARAMS, upload_source_files=['src/models/GAT_Hierar_Tok_Node_Aggr.py']):
     neptune.set_property('server', 'IRGPU11')
     neptune.set_property('training_set_path', training_path)
     neptune.set_property('dev_set_path', dev_path)
@@ -1469,14 +1480,14 @@ with neptune.create_experiment(name="full base 2-layer gelu span pred + regulari
             assert not torch.isnan(total_loss)
             sent_loss = output['sent']['loss']
             ent_loss = output['ent']['loss']
-            srl_loss = output['srl']['loss']
+            # srl_loss = output['srl']['loss']
             span_loss = output['span']['loss']
             # neptune
             neptune.log_metric("total_loss", total_loss.detach().item())
             if sent_loss is not None:
                 neptune.log_metric("sent_loss", sent_loss.detach().item())
-            if srl_loss is not None:
-                neptune.log_metric("srl_loss", srl_loss.detach().item())
+            # if srl_loss is not None:
+            #     neptune.log_metric("srl_loss", srl_loss.detach().item())
             if ent_loss is not None:    
                 neptune.log_metric("ent_loss", ent_loss.detach().item())
             if span_loss is not None:
