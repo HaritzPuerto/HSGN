@@ -24,8 +24,8 @@ torch.manual_seed(random_seed)
 torch.cuda.manual_seed_all(random_seed)
 # %%
 device = 'cuda'
-#pretrained_weights = 'bert-base-cased'
-pretrained_weights = 'albert-xxlarge-v2'
+pretrained_weights = 'bert-base-cased'
+#pretrained_weights = 'albert-xxlarge-v2'
 data_path = 'data/'
 hotpotqa_path = 'external/'
 intermediate_train_data_path = 'interim/training/'
