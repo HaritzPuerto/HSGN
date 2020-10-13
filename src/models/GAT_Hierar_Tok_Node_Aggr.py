@@ -541,7 +541,8 @@ class HGNModel(BertPreTrainedModel):
         
         # span prediction
         self.num_labels = config.num_labels
-        self.qa_outputs = nn.Sequential(nn.Linear(config.hidden_size, config.hidden_size), GeLU(), nn.Dropout(dict_params['span_drop']),
+        self.qa_gru = nn.GRU(input_size=config.hidden_size, hidden_size=config.hidden_size, bidirectional=True)
+        self.qa_outputs = nn.Sequential(nn.Linear(config.hidden_size*2, config.hidden_size), GeLU(), nn.Dropout(dict_params['span_drop']),
                                         nn.Linear(config.hidden_size, 2))
         # init weights
         self.init_weights()
@@ -578,6 +579,8 @@ class HGNModel(BertPreTrainedModel):
         # Graph forward & node classification
         graph_out, graph_emb = self.graph_forward(graph, sequence_output, train)
         sequence_output = graph_emb['tok'].unsqueeze(0)
+        sequence_output = sequence_output.view(-1,1,dict_params['out_feats'])
+        sequence_output = self.qa_gru(sequence_output)[0].view(1,-1, dict_params['out_feats']*2)
         # span prediction
         span_loss = None
         start_logits = None
@@ -891,12 +894,12 @@ model.cuda()
 #                    token_type_ids=token_type_ids, 
 #                    start_positions=start_positions,
 #                    end_positions=end_positions)
-#     total_loss = output['loss']
-#     total_loss.backward()
-#     torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-#     optimizer.step()
-#     scheduler.step()
-#     model.zero_grad()
+# #     total_loss = output['loss']
+# #     total_loss.backward()
+# #     torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+# #     optimizer.step()
+# #     scheduler.step()
+# #     model.zero_grad()
 
 # %%
 train_dataloader = list_graphs
@@ -1420,8 +1423,8 @@ model_path = 'models'
 best_eval_em = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="full base 2-layer gelu span pred + regularization query edges", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
-    neptune.set_property('server', 'IRGPU11')
+with neptune.create_experiment(name="full base gru + 2-layer gelu span pred + regularization query edges", params=PARAMS, upload_source_files=['src/model/GAT_Hierar_Tok_Node_Aggr.py']):
+    neptune.set_property('server', 'nipa')
     neptune.set_property('training_set_path', training_path)
     neptune.set_property('dev_set_path', dev_path)
 
@@ -1449,7 +1452,6 @@ with neptune.create_experiment(name="full base 2-layer gelu span pred + regulari
             random.shuffle(list_idx_curriculum_learning)
         # For each batch of training data...
         for step, idx in enumerate(tqdm(list_idx_curriculum_learning)):
-            idx = step
             b_graph = list_graphs[idx]
             neptune.log_metric('step', step)
             # forward
