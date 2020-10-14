@@ -45,7 +45,7 @@ torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
 # %%
-data_path = "data/"
+data_path = "../../data/"
 hotpot_qa_path = os.path.join(data_path, "external")
 
 with open(os.path.join(hotpot_qa_path, "hotpot_train_v1.1.json"), "r") as f:
@@ -614,7 +614,7 @@ class HGNModel(BertPreTrainedModel):
         initial_graph_emb = graph_emb # for skip-connection
         
         # update graph embedding #
-        graph_emb = self.rgcn(graph, graph_emb, bert_context_emb[0])
+        # graph_emb = self.rgcn(graph, graph_emb, bert_context_emb[0])
         
         # graph_emb shape [num_nodes, num_heads, in_feats] num_heads = 1
 #         graph_emb = graph_emb.view(-1, dict_params['out_feats'])
@@ -1420,8 +1420,8 @@ model_path = 'models'
 best_eval_em = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="full base 2-layer gelu span pred + regularization query edges", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
-    neptune.set_property('server', 'IRGPU11')
+with neptune.create_experiment(name="485 only bert base", params=PARAMS, upload_source_files=['src/models/GAT_Hierar_Tok_Node_Aggr.py']):
+    neptune.set_property('server', 'IRGPU 5')
     neptune.set_property('training_set_path', training_path)
     neptune.set_property('dev_set_path', dev_path)
 
@@ -1449,7 +1449,6 @@ with neptune.create_experiment(name="full base 2-layer gelu span pred + regulari
             random.shuffle(list_idx_curriculum_learning)
         # For each batch of training data...
         for step, idx in enumerate(tqdm(list_idx_curriculum_learning)):
-            idx = step
             b_graph = list_graphs[idx]
             neptune.log_metric('step', step)
             # forward

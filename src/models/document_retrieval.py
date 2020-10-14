@@ -8,10 +8,10 @@ from transformers import BertForSequenceClassification
 from torch.utils.data import TensorDataset, DataLoader, SequentialSampler
 import numpy as np
 from sklearn.metrics import accuracy_score
-
+import json
 
 class DocumentRetrieval():
-    def __init__(self, device, model_path, pretrained_weights='bert-base-uncased'):
+    def __init__(self, device, model_path, pretrained_weights='bert-large-cased-whole-word-masking'):
         self.model = BertForSequenceClassification.from_pretrained(model_path)
         self.tokenizer = BertTokenizer.from_pretrained(pretrained_weights, do_lower_case=True)
         self.device = device
@@ -20,8 +20,17 @@ class DocumentRetrieval():
 
     def predict_relevant_docs(self, data, batch_size=16, k=2):
         _input = self.__create_input(data)
-        (recall2_idx, _, _) = self.__inference(_input)
+        (recall2_idx, recall3_idx, recall4_idx) = self.__inference(_input)
         dict_ins2dict_doc2pred = self._create_output_dictionary(recall2_idx)
+        dict_ins2dict_doc2pred3 = self._create_output_dictionary(recall3_idx)
+        dict_ins2dict_doc2pred4 = self._create_output_dictionary(recall4_idx)
+        print("saving doc retrieval output")
+        with open('train_top2_doc_ret.json', 'w+') as f:
+            json.dump(dict_ins2dict_doc2pred, f)
+        with open('train_top3_doc_ret.json', 'w+') as f:
+            json.dump(dict_ins2dict_doc2pred3, f)
+        with open('train_top4_doc_ret.json', 'w+') as f:
+            json.dump(dict_ins2dict_doc2pred4, f)   
         return dict_ins2dict_doc2pred
 
     def __create_input(self, dev_data):
@@ -115,4 +124,3 @@ class DocumentRetrieval():
             for predidx in recall2_idx[qid][0]:
                 dict_recall2[qid][predidx] = 1
         return dict_recall2
-       

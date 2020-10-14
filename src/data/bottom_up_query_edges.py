@@ -24,9 +24,9 @@ torch.manual_seed(random_seed)
 torch.cuda.manual_seed_all(random_seed)
 # %%
 device = 'cuda'
-#pretrained_weights = 'bert-base-cased'
-pretrained_weights = 'albert-xxlarge-v2'
-data_path = 'data/'
+pretrained_weights = 'bert-base-cased'
+#pretrained_weights = 'albert-xxlarge-v2'
+data_path = '../../data/'
 hotpotqa_path = 'external/'
 intermediate_train_data_path = 'interim/training/'
 intermediate_dev_data_path = 'interim/dev/'
@@ -1113,6 +1113,12 @@ def add_metadata2graph(graph, metadata):
         for (k, v) in dict_node.items():
             graph.nodes[node].data[k] = torch.tensor(v)
     return graph
+
+# %%
+train_dataset = Dataset(hotpot_train[0:10], list_hotpot_train_ner, dict_ins_doc_sent_srl_triples,
+                        dict_ins_query_srl_triples_training, list_ent_query_training, batch_size=1)
+
+list_context = train_dataset.create_dataloader()
 
 # %%
 train_dataset = Dataset(hotpot_train[0:10], list_hotpot_train_ner, dict_ins_doc_sent_srl_triples,
