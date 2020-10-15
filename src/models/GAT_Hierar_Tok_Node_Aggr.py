@@ -386,11 +386,9 @@ class HeteroRGCNLayer(nn.Module):
             if "2tok" in etype:
                 pass
             elif "srl2srl" == etype:
-                pass
+                funcs[etype] = ((lambda e: self.message_func_rel(bert_token_emb, e)) , self.reduce_func)
             elif "ent2ent_rel" == etype:
                 funcs[etype] = ((lambda e: self.message_func_rel(bert_token_emb, e)) , self.reduce_func)
-            elif "sent2at" == etype:
-                funcs[etype] = (self.message_func_AT_node, self.reduce_func)
             else:
                 funcs[etype] = (self.message_func_regular_node, self.reduce_func)
         G.multi_update_all(funcs, 'sum')
@@ -1420,8 +1418,8 @@ model_path = 'models'
 best_eval_em = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="full base 2-layer gelu span pred + regularization query edges", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
-    neptune.set_property('server', 'IRGPU11')
+with neptune.create_experiment(name="495 + SRL pred", params=PARAMS, upload_source_files=['src/models/GAT_Hierar_Tok_Node_Aggr.py']):
+    neptune.set_property('server', 'nipa')
     neptune.set_property('training_set_path', training_path)
     neptune.set_property('dev_set_path', dev_path)
 
