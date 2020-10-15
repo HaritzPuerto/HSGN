@@ -45,7 +45,7 @@ torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
 # %%
-data_path = "../../data/"
+data_path = "data/"
 hotpot_qa_path = os.path.join(data_path, "external")
 
 with open(os.path.join(hotpot_qa_path, "hotpot_train_v1.1.json"), "r") as f:
@@ -137,7 +137,7 @@ list_metadata_files = natural_sort([f for f in listdir(training_metadata_path) i
 list_graph_metadata_files = list(zip(list_graph_files, list_metadata_files))
 
 list_graphs = []
-for (g_file, metadata_file) in tqdm(list_graph_metadata_files[0:10]):
+for (g_file, metadata_file) in tqdm(list_graph_metadata_files):
     if ".bin" in g_file:
         with open(os.path.join(training_graphs_path, g_file), "rb") as f:
             graph = pickle.load(f)
@@ -878,36 +878,28 @@ model.cuda()
 # 
 
 # %%
-model.train()
-for step, b_graph in enumerate(tqdm(list_graphs[1:4])):
-    model.zero_grad()
-    # forward
-    input_ids=tensor_input_ids[step].unsqueeze(0).to(device)
-    attention_mask=tensor_attention_masks[step].unsqueeze(0).to(device)
-    token_type_ids=tensor_token_type_ids[step].unsqueeze(0).to(device) 
-    start_positions=torch.tensor([list_span_idx[step][0]], device='cuda')
-    end_positions=torch.tensor([list_span_idx[step][1]], device='cuda')
-    outputs = model.bert(
-            input_ids=input_ids,
-                   attention_mask=attention_mask,
-                   token_type_ids=token_type_ids, 
-                   
-        )
+# model.train()
+# for step, b_graph in enumerate(tqdm(list_graphs)):
+#     model.zero_grad()
+#     # forward
+#     input_ids=tensor_input_ids[step].unsqueeze(0).to(device)
+#     attention_mask=tensor_attention_masks[step].unsqueeze(0).to(device)
+#     token_type_ids=tensor_token_type_ids[step].unsqueeze(0).to(device) 
+#     start_positions=torch.tensor([list_span_idx[step][0]], device='cuda')
+#     end_positions=torch.tensor([list_span_idx[step][1]], device='cuda')
+    
 #     output = model(b_graph,
 #                    input_ids=input_ids,
 #                    attention_mask=attention_mask,
 #                    token_type_ids=token_type_ids, 
 #                    start_positions=start_positions,
 #                    end_positions=end_positions)
-#     total_loss = output['loss']
-#     total_loss.backward()
-#     torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-#     optimizer.step()
-#     scheduler.step()
-#     model.zero_grad()
-
-# %%
-output
+# #     total_loss = output['loss']
+# #     total_loss.backward()
+# #     torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+# #     optimizer.step()
+# #     scheduler.step()
+# #     model.zero_grad()
 
 # %%
 train_dataloader = list_graphs
@@ -1182,9 +1174,9 @@ class Validation():
             prediction_sent = torch.argmax(output['sent']['probs'], dim=1)
             sp_em, sp_prec, sp_recall = self.update_sp_metrics(metrics, prediction_sent, sent_labels)
             # srl
-            prediction_srl = torch.argmax(output['srl']['probs'], dim=1)
-            srl_labels = output['srl']['lbl']
-            self.update_srl_metrics(metrics, prediction_srl, srl_labels, output['srl']['probs'][:,1])
+            # prediction_srl = torch.argmax(output['srl']['probs'], dim=1)
+            # srl_labels = output['srl']['lbl']
+            # self.update_srl_metrics(metrics, prediction_srl, srl_labels, output['srl']['probs'][:,1])
             # ent
             if output['ent']['probs'] is not None:
                 prediction_ent = torch.argmax(output['ent']['probs'], dim=1)
@@ -1460,7 +1452,6 @@ with neptune.create_experiment(name="495 - SRL", params=PARAMS, upload_source_fi
             random.shuffle(list_idx_curriculum_learning)
         # For each batch of training data...
         for step, idx in enumerate(tqdm(list_idx_curriculum_learning)):
-            idx = step
             b_graph = list_graphs[idx]
             neptune.log_metric('step', step)
             # forward
