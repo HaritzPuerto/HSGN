@@ -39,9 +39,6 @@ np.random.seed(random_seed)
 torch.manual_seed(random_seed)
 torch.cuda.manual_seed_all(random_seed)
 torch.backends.cudnn.deterministic = True
-
-
-torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
 # %%
@@ -543,6 +540,9 @@ class HGNModel(BertPreTrainedModel):
         self.num_labels = config.num_labels
         self.qa_outputs = nn.Sequential(nn.Linear(config.hidden_size, config.hidden_size), GeLU(), nn.Dropout(dict_params['span_drop']),
                                         nn.Linear(config.hidden_size, 2))
+        self.qa_outputs_from_sp = nn.Sequential(nn.Linear(config.hidden_size, config.hidden_size), GeLU(), nn.Dropout(dict_params['span_drop']),
+                                       nn.Linear(config.hidden_size, 2)) 
+
         # init weights
         self.init_weights()
         # params
@@ -582,7 +582,9 @@ class HGNModel(BertPreTrainedModel):
         span_loss = None
         start_logits = None
         end_logits = None
-        span_loss, start_logits, end_logits = self.span_prediction(sequence_output, start_positions, end_positions)
+        span_loss, start_logits, end_logits = self.span_prediction(graph, sequence_output, 
+                                                                   start_positions, end_positions, 
+                                                                   graph_out['sent']['probs'][:,1])
         assert not torch.isnan(start_logits).any()
         assert not torch.isnan(end_logits).any()  
         # loss
@@ -832,20 +834,38 @@ class HGNModel(BertPreTrainedModel):
         g2d_graph_emb = self.graph2token_attention(g2d_graph, g2d_graph_emb)
         return g2d_graph_emb[0:offset_node].unsqueeze(0)
     
-    def span_prediction(self, sequence_output, start_positions, end_positions):
+    def span_prediction(self, g, sequence_output, start_positions, end_positions, sp_probs, topk_sp=3):
+        # span pred from tokens
         logits = self.qa_outputs(sequence_output)
         start_logits, end_logits = logits.split(1, dim=-1)
         start_logits = start_logits.squeeze(-1)
         end_logits = end_logits.squeeze(-1)
-
+        # span prediction from sp
+        seq_shape = sequence_output.shape
+        seq_output_from_sp = torch.zeros(seq_shape[0], seq_shape[1], seq_shape[2]).to(device)
+        
+        topk_sp = min(topk_sp, g.number_of_nodes('sent'))
+        _, topk_sent_nodes = torch.topk(sp_probs, topk_sp)
+        
+        for st, end in g.nodes['sent'].data['st_end_idx'][topk_sent_nodes]:
+            seq_output_from_sp[0,st.item():end.item(),:] = sequence_output[0,st.item():end.item(),:]
+        
+        logits2 = self.qa_outputs_from_sp(seq_output_from_sp)
+        start_logits2, end_logits2 = logits2.split(1, dim=-1)
+        start_logits2 = start_logits2.squeeze(-1)
+        end_logits2 = end_logits2.squeeze(-1)
+        
+        final_start_logits = start_logits + start_logits2
+        final_end_logits = end_logits + end_logits2
+        
         total_loss = None
         if ((start_positions is not None and end_positions is not None) and
             (start_positions != -1 and end_positions != -1)):
             loss_fct = nn.CrossEntropyLoss()
-            start_loss = loss_fct(start_logits, start_positions)
-            end_loss = loss_fct(end_logits, end_positions)
+            start_loss = loss_fct(final_start_logits, start_positions)
+            end_loss = loss_fct(final_end_logits, end_positions)
             total_loss = (start_loss + end_loss) / 2
-        return (total_loss,  start_logits, end_logits)
+        return (total_loss,  final_start_logits, final_end_logits)
 
 
 # %%
@@ -891,12 +911,12 @@ model.cuda()
 #                    token_type_ids=token_type_ids, 
 #                    start_positions=start_positions,
 #                    end_positions=end_positions)
-#     total_loss = output['loss']
-#     total_loss.backward()
-#     torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-#     optimizer.step()
-#     scheduler.step()
-#     model.zero_grad()
+# #     total_loss = output['loss']
+# #     total_loss.backward()
+# #     torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+# #     optimizer.step()
+# #     scheduler.step()
+# #     model.zero_grad()
 
 # %%
 train_dataloader = list_graphs
@@ -1415,13 +1435,13 @@ def record_eval_metric(neptune, metrics):
 
 
 # %%
-model_path = 'models'
+model_path = 'models/sp_span_pred'
 
 best_eval_em = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="full base 2-layer gelu span pred + regularization query edges", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
-    neptune.set_property('server', 'IRGPU11')
+with neptune.create_experiment(name="sp span pred", params=PARAMS, upload_source_files=['src/models/GAT_Hierar_Tok_Node_Aggr.py']):
+    neptune.set_property('server', 'nipa')
     neptune.set_property('training_set_path', training_path)
     neptune.set_property('dev_set_path', dev_path)
 
@@ -1449,7 +1469,6 @@ with neptune.create_experiment(name="full base 2-layer gelu span pred + regulari
             random.shuffle(list_idx_curriculum_learning)
         # For each batch of training data...
         for step, idx in enumerate(tqdm(list_idx_curriculum_learning)):
-            idx = step
             b_graph = list_graphs[idx]
             neptune.log_metric('step', step)
             # forward
