@@ -78,7 +78,7 @@ class DocumentRetrieval():
         recall2 = 0
         recall3 = 0
         recall4 = 0
-        for step, batch in tqdm(enumerate(batch_for_each_query)):
+        for step, batch in enumerate(tqdm(batch_for_each_query)):
             b_input_ids = batch[0].to(self.device)
             b_input_tokens = batch[1].to(self.device)
             b_input_mask = batch[2].to(self.device)
