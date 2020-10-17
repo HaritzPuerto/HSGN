@@ -28,24 +28,28 @@ class NER_stanza():
 
     def extract_named_entities(self, hotpot, dict_ins2dict_doc2pred):
         list_hotpot_ner = []
-        for instance_idx, hotpot_instance in enumerate(tqdm(hotpot)):
-            list_doc_ner = []
-            for doc_idx, (doc_title, doc) in enumerate(hotpot_instance['context']):
-                list_sent_ner = []
-                if dict_ins2dict_doc2pred[instance_idx][doc_idx] == 1:
-                    for sent_idx, sentence in enumerate(doc):
-                        list_sent_ner.append(self.get_ner(sentence))
-                list_doc_ner.append(list_sent_ner)
-            list_hotpot_ner.append(list_doc_ner)
-        return list_hotpot_ner
+        try:
+            for instance_idx, hotpot_instance in enumerate(tqdm(hotpot)):
+                list_doc_ner = []
+                for doc_idx, (doc_title, doc) in enumerate(hotpot_instance['context']):
+                    list_sent_ner = []
+                    if dict_ins2dict_doc2pred[instance_idx][doc_idx] == 1:
+                        for sent_idx, sentence in enumerate(doc):
+                            list_sent_ner.append(self.get_ner(sentence))
+                    list_doc_ner.append(list_sent_ner)
+                list_hotpot_ner.append(list_doc_ner)
+            return list_hotpot_ner
+        except:
+            print("error TT")
+            return list_hotpot_ner
 
 
 
 # %%
 import json
-with open('../../dev_top4_doc_ret.json', 'r') as f:
+with open('train_top4_doc_ret.json', 'r') as f:
     dict_ins2dict_doc2pred = json.load(f)
-with open('../../data/external/hotpot_dev_distractor_v1.json', 'r') as f:
+with open('../../data/external/hotpot_train_v1.1.json', 'r') as f:
     hotpot = json.load(f)
 
 def golden_docs(hotpot, ins_idx):
@@ -63,14 +67,30 @@ dict_ins2dict_doc2pred_no_golden_doc = dict()
 for ins, dict_doc2pred in dict_ins2dict_doc2pred.items():
     dict_doc2pred_no_golden_doc = dict()
     list_golden = golden_docs(hotpot, int(ins))
+    cnt = 0
     for doc, pred in dict_doc2pred.items():
-        if doc in list_golden:
-            dict_doc2pred_no_golden_doc[doc] = 0
+        if doc in list_golden or cnt == 2:
+            dict_doc2pred_no_golden_doc[int(doc)] = 0
         else:
-            dict_doc2pred_no_golden_doc[doc] = pred
-    dict_ins2dict_doc2pred_no_golden_doc[ins] = dict_doc2pred_no_golden_doc
+            dict_doc2pred_no_golden_doc[int(doc)] = pred
+            if pred == 1:
+                cnt += 1
+    dict_ins2dict_doc2pred_no_golden_doc[int(ins)] = dict_doc2pred_no_golden_doc
 
 # %%
 ner = NER_stanza()
 
 list_hotpot_ner = ner.extract_named_entities(hotpot, dict_ins2dict_doc2pred_no_golden_doc)
+
+# %%
+with open('train_entities_non_golden.json', 'w+') as f:
+    json.dump(list_hotpot_ner, f)
+
+# %%
+with open('train_entities_non_golden.json', 'r+') as f:
+    a = json.load(f)
+
+# %%
+len(a)
+
+# %%

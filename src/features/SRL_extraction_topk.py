@@ -18,7 +18,7 @@ class SRL():
             - dictionary of the form: argX -> [int] (argument to spacy token index)
             - list of spacy tokens
         '''
-        srl_instance = self.predictor.predict_tokenized(sentence.split())
+        srl_instance = self.predictor.predict_tokenized(sentence.split()[:150])
         list_dict_arg2idx = []
         for verb in srl_instance['verbs']:
             dict_tag2idx = dict()
@@ -56,6 +56,8 @@ class SRL():
     def extract_srl(self, hotpot, dict_ins2dict_doc2pred):
         dict_ins_doc_sent_srl_triples = dict()
         for ins_idx, hotpot_instance in enumerate(tqdm(hotpot)):
+#             if ins_idx < 17519 or ins_idx > 50000:
+#                 continue
             dict_doc_sent_srl_triples = dict()
             for doc_idx, (doc_title, doc) in enumerate(hotpot_instance['context']):
                 if dict_ins2dict_doc2pred[ins_idx][doc_idx] == 0:
@@ -85,8 +87,8 @@ class SRL():
             dict_ins_doc_sent_srl_triples[ins_idx] = dict_doc_sent_srl_triples
         return dict_ins_doc_sent_srl_triples
 
-srl_model = SRL()
-with open('../../dev_top4_doc_ret.json', 'r') as f:
+import json
+with open('train_top4_doc_ret.json', 'r') as f:
     dict_ins2dict_doc2pred = json.load(f)
 
 def golden_docs(hotpot, ins_idx):
@@ -98,15 +100,31 @@ def golden_docs(hotpot, ins_idx):
         golden_docs_idx.add(str(title2idx[title]))
     return golden_docs_idx
 
+with open('../../data/external/hotpot_train_v1.1.json', 'r') as f:
+    hotpot = json.load(f)
+
 dict_ins2dict_doc2pred_no_golden_doc = dict()
 for ins, dict_doc2pred in dict_ins2dict_doc2pred.items():
     dict_doc2pred_no_golden_doc = dict()
     list_golden = golden_docs(hotpot, int(ins))
+    cnt = 0
     for doc, pred in dict_doc2pred.items():
-        if doc in list_golden:
-            dict_doc2pred_no_golden_doc[doc] = 0
+        if doc in list_golden or cnt == 2:
+            dict_doc2pred_no_golden_doc[int(doc)] = 0
         else:
-            dict_doc2pred_no_golden_doc[doc] = pred
-    dict_ins2dict_doc2pred_no_golden_doc[ins] = dict_doc2pred_no_golden_doc
+            dict_doc2pred_no_golden_doc[int(doc)] = pred
+            if pred == 1:
+                cnt += 1
+    dict_ins2dict_doc2pred_no_golden_doc[int(ins)] = dict_doc2pred_no_golden_doc
 
-srl_out = srl.extract_srl(hotpot, dict_ins2dict_doc2pred_no_golden_doc)
+srl_model = SRL()
+
+srl_out = srl_model.extract_srl(hotpot, dict_ins2dict_doc2pred_no_golden_doc)
+
+srl_out = srl_model.extract_srl(hotpot[0:10], dict_ins2dict_doc2pred_no_golden_doc)
+
+srl_out
+
+predictor = Predictor.from_path("https://s3-us-west-2.amazonaws.com/allennlp/models/bert-base-srl-2019.06.17.tar.gz")
+
+
