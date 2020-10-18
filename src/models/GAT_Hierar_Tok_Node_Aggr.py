@@ -541,7 +541,9 @@ class HGNModel(BertPreTrainedModel):
         self.qa_outputs = nn.Sequential(nn.Linear(config.hidden_size, config.hidden_size), GeLU(), nn.Dropout(dict_params['span_drop']),
                                         nn.Linear(config.hidden_size, 2))
         self.qa_outputs_from_sp = nn.Sequential(nn.Linear(config.hidden_size, config.hidden_size), GeLU(), nn.Dropout(dict_params['span_drop']),
-                                       nn.Linear(config.hidden_size, 2)) 
+                                       nn.Linear(config.hidden_size, 2))
+        self.qa_outputs_from_srl = nn.Sequential(nn.Linear(config.hidden_size, config.hidden_size), GeLU(), nn.Dropout(dict_params['span_drop']),
+                                       nn.Linear(config.hidden_size, 2))
 
         # init weights
         self.init_weights()
@@ -584,7 +586,7 @@ class HGNModel(BertPreTrainedModel):
         end_logits = None
         span_loss, start_logits, end_logits = self.span_prediction(graph, sequence_output, 
                                                                    start_positions, end_positions, 
-                                                                   graph_out['sent'],
+                                                                   graph_out['sent'], graph_out['srl'],
                                                                    train)
         assert not torch.isnan(start_logits).any()
         assert not torch.isnan(end_logits).any()  
@@ -720,7 +722,7 @@ class HGNModel(BertPreTrainedModel):
             ent_labels = ent_labels.cpu().view(-1)
 
         return ({'sent': {'loss': loss_sent, 'probs': probs_sent, 'lbl': sent_labels, 'sample_nodes': sample_sent_nodes},
-                'srl': {'loss': loss_srl, 'probs': probs_srl, 'lbl': srl_labels},
+                'srl': {'loss': loss_srl, 'probs': probs_srl, 'lbl': srl_labels, 'sample_nodes': sample_srl_nodes},
                 'ent': {'loss': loss_ent, 'probs': probs_ent, 'lbl': ent_labels},
                 },
                 graph_emb)
@@ -835,7 +837,7 @@ class HGNModel(BertPreTrainedModel):
         g2d_graph_emb = self.graph2token_attention(g2d_graph, g2d_graph_emb)
         return g2d_graph_emb[0:offset_node].unsqueeze(0)
     
-    def span_prediction(self, g, sequence_output, start_positions, end_positions, sent_node_output, train, topk_sp=3):
+    def span_prediction(self, g, sequence_output, start_positions, end_positions, sent_node_output, srl_node_output, train, topk_sp=3):
         # span pred from tokens
         logits = self.qa_outputs(sequence_output)
         start_logits, end_logits = logits.split(1, dim=-1)
@@ -857,14 +859,52 @@ class HGNModel(BertPreTrainedModel):
             _, topk_sent_nodes = torch.topk(sp_probs, topk_sp)
             for st, end in g.nodes['sent'].data['st_end_idx'][topk_sent_nodes]:
                 seq_output_from_sp[0,st.item():end.item(),:] = sequence_output[0,st.item():end.item(),:]
+        ## add query
+        (q_st, q_end) = g.nodes['query'].data['st_end_idx'][0]
+        seq_output_from_sp[0,q_st.item():q_end.item(),:] = sequence_output[0,q_st.item():q_end.item(),:]
+        ## add yes no
+        yn_st = q_end.item() + 1
+        yn_end = yn_st + 2
+        seq_output_from_sp[0,yn_st.item():yn_end.item(),:] = sequence_output[0,yn_st.item():yn_end.item(),:]
         ## sp logits
         logits2 = self.qa_outputs_from_sp(seq_output_from_sp)
         start_logits2, end_logits2 = logits2.split(1, dim=-1)
         start_logits2 = start_logits2.squeeze(-1)
         end_logits2 = end_logits2.squeeze(-1)
+        
+        # srl span prediction
+        seq_shape = sequence_output.shape
+        seq_output_from_srl = torch.zeros(seq_shape[0], seq_shape[1], seq_shape[2]).to(device)
+        srl_probs = srl_node_output['srl'][:,1]
+        ## input for sp span pred
+        if train:
+            sample_nodes = srl_node_output['sample_nodes']
+            topk_srl = min(5, len(sample_nodes))
+            _, topk_srl_nodes = torch.topk(srl_probs, topk_srl)
+            for st, end in g.nodes['srl'].data['st_end_idx'][sample_nodes][topk_srl_nodes]:
+                seq_output_from_srl[0,st.item():end.item(),:] = sequence_output[0,st.item():end.item(),:]
+        else:
+            topk_sp = min(topk_srl, g.number_of_nodes('srl'))
+            _, topk_srl_nodes = torch.topk(srl_probs, topk_srl)
+            for st, end in g.nodes['srl'].data['st_end_idx'][topk_srl_nodes]:
+                seq_output_from_srl[0,st.item():end.item(),:] = sequence_output[0,st.item():end.item(),:]
+        ## add query
+        (q_st, q_end) = g.nodes['query'].data['st_end_idx'][0]
+        seq_output_from_srl[0,q_st.item():q_end.item(),:] = sequence_output[0,q_st.item():q_end.item(),:]
+        ## add yes no
+        yn_st = q_end.item() + 1
+        yn_end = yn_st + 2
+        seq_output_from_srl[0,yn_st.item():yn_end.item(),:] = sequence_output[0,yn_st.item():yn_end.item(),:]
+        ## srl logits
+        logits3 = self.qa_outputs_from_srl(seq_output_from_srl)
+        start_logits3, end_logits3 = logits3.split(1, dim=-1)
+        start_logits3 = start_logits3.squeeze(-1)
+        end_logits3 = end_logits3.squeeze(-1)
+
+
         # original logits + sp logits
-        final_start_logits = start_logits + start_logits2
-        final_end_logits = end_logits + end_logits2
+        final_start_logits = start_logits + start_logits2 + start_logits3
+        final_end_logits = end_logits + end_logits2 + end_logits3
         # loss
         total_loss = None
         if ((start_positions is not None and end_positions is not None) and
@@ -1450,13 +1490,13 @@ def record_eval_metric(neptune, metrics):
 
 
 # %%
-model_path = 'models/sp_span_pred'
+model_path = 'models/sp_srl_span_pred'
 
 best_eval_em = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="sp span pred", params=PARAMS, upload_source_files=['src/models/GAT_Hierar_Tok_Node_Aggr.py']):
-    neptune.set_property('server', 'nipa')
+with neptune.create_experiment(name="regular-sp-srl span pred. eval 1K", params=PARAMS, upload_source_files=['src/models/GAT_Hierar_Tok_Node_Aggr.py']):
+    neptune.set_property('server', 'IRGPU11')
     neptune.set_property('training_set_path', training_path)
     neptune.set_property('dev_set_path', dev_path)
 
@@ -1528,7 +1568,7 @@ with neptune.create_experiment(name="sp span pred", params=PARAMS, upload_source
                     #############################
                     ######### Validation ########
                     #############################
-                    validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
+                    validation = Validation(model, hotpot_dev[:1000], dev_list_graphs, tokenizer,
                                             dev_tensor_input_ids, dev_tensor_attention_masks, 
                                             dev_tensor_token_type_ids,
                                             dev_list_span_idx)
@@ -1567,6 +1607,7 @@ with neptune.create_experiment(name="sp span pred", params=PARAMS, upload_source
                                 dev_tensor_token_type_ids,
                                 dev_list_span_idx)
         metrics = validation.do_validation()
+        print(metrics)
         model.train()
         record_eval_metric(neptune, metrics)
 
