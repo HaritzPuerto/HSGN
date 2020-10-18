@@ -584,7 +584,8 @@ class HGNModel(BertPreTrainedModel):
         end_logits = None
         span_loss, start_logits, end_logits = self.span_prediction(graph, sequence_output, 
                                                                    start_positions, end_positions, 
-                                                                   graph_out['sent']['probs'][:,1])
+                                                                   graph_out['sent'],
+                                                                   train)
         assert not torch.isnan(start_logits).any()
         assert not torch.isnan(end_logits).any()  
         # loss
@@ -718,7 +719,7 @@ class HGNModel(BertPreTrainedModel):
         if ent_labels is not None:
             ent_labels = ent_labels.cpu().view(-1)
 
-        return ({'sent': {'loss': loss_sent, 'probs': probs_sent, 'lbl': sent_labels},
+        return ({'sent': {'loss': loss_sent, 'probs': probs_sent, 'lbl': sent_labels, 'sample_nodes': sample_sent_nodes},
                 'srl': {'loss': loss_srl, 'probs': probs_srl, 'lbl': srl_labels},
                 'ent': {'loss': loss_ent, 'probs': probs_ent, 'lbl': ent_labels},
                 },
@@ -834,7 +835,7 @@ class HGNModel(BertPreTrainedModel):
         g2d_graph_emb = self.graph2token_attention(g2d_graph, g2d_graph_emb)
         return g2d_graph_emb[0:offset_node].unsqueeze(0)
     
-    def span_prediction(self, g, sequence_output, start_positions, end_positions, sp_probs, topk_sp=3):
+    def span_prediction(self, g, sequence_output, start_positions, end_positions, sent_node_output, train, topk_sp=3):
         # span pred from tokens
         logits = self.qa_outputs(sequence_output)
         start_logits, end_logits = logits.split(1, dim=-1)
@@ -843,21 +844,28 @@ class HGNModel(BertPreTrainedModel):
         # span prediction from sp
         seq_shape = sequence_output.shape
         seq_output_from_sp = torch.zeros(seq_shape[0], seq_shape[1], seq_shape[2]).to(device)
-        
-        topk_sp = min(topk_sp, g.number_of_nodes('sent'))
-        _, topk_sent_nodes = torch.topk(sp_probs, topk_sp)
-        
-        for st, end in g.nodes['sent'].data['st_end_idx'][topk_sent_nodes]:
-            seq_output_from_sp[0,st.item():end.item(),:] = sequence_output[0,st.item():end.item(),:]
-        
+        sp_probs = sent_node_output['probs'][:,1]
+        ## input for sp span pred
+        if train:
+            sample_nodes = sent_node_output['sample_nodes']
+            topk_sp = min(topk_sp, len(sample_nodes))
+            _, topk_sent_nodes = torch.topk(sp_probs, topk_sp)
+            for st, end in g.nodes['sent'].data['st_end_idx'][sample_nodes][topk_sent_nodes]:
+                seq_output_from_sp[0,st.item():end.item(),:] = sequence_output[0,st.item():end.item(),:]
+        else:
+            topk_sp = min(topk_sp, g.number_of_nodes('sent'))
+            _, topk_sent_nodes = torch.topk(sp_probs, topk_sp)
+            for st, end in g.nodes['sent'].data['st_end_idx'][topk_sent_nodes]:
+                seq_output_from_sp[0,st.item():end.item(),:] = sequence_output[0,st.item():end.item(),:]
+        ## sp logits
         logits2 = self.qa_outputs_from_sp(seq_output_from_sp)
         start_logits2, end_logits2 = logits2.split(1, dim=-1)
         start_logits2 = start_logits2.squeeze(-1)
         end_logits2 = end_logits2.squeeze(-1)
-        
+        # original logits + sp logits
         final_start_logits = start_logits + start_logits2
         final_end_logits = end_logits + end_logits2
-        
+        # loss
         total_loss = None
         if ((start_positions is not None and end_positions is not None) and
             (start_positions != -1 and end_positions != -1)):
@@ -1402,6 +1410,13 @@ class Validation():
 # %%
 # model = HGNModel.from_pretrained('/workspace/ml-workspace/thesis_git/HSGN/models')
 # model.cuda()
+
+# %%
+# validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
+#                         dev_tensor_input_ids, dev_tensor_attention_masks, 
+#                         dev_tensor_token_type_ids,
+#                         dev_list_span_idx)
+# metrics = validation.do_validation()
 
 # %%
 # validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
