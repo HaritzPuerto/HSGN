@@ -134,7 +134,7 @@ list_metadata_files = natural_sort([f for f in listdir(training_metadata_path) i
 list_graph_metadata_files = list(zip(list_graph_files, list_metadata_files))
 
 list_graphs = []
-for (g_file, metadata_file) in tqdm(list_graph_metadata_files):
+for (g_file, metadata_file) in tqdm(list_graph_metadata_files[:100]):
     if ".bin" in g_file:
         with open(os.path.join(training_graphs_path, g_file), "rb") as f:
             graph = pickle.load(f)
@@ -860,12 +860,13 @@ class HGNModel(BertPreTrainedModel):
             for st, end in g.nodes['sent'].data['st_end_idx'][topk_sent_nodes]:
                 seq_output_from_sp[0,st.item():end.item(),:] = sequence_output[0,st.item():end.item(),:]
         ## add query
-        (q_st, q_end) = g.nodes['query'].data['st_end_idx'][0]
-        seq_output_from_sp[0,q_st.item():q_end.item(),:] = sequence_output[0,q_st.item():q_end.item(),:]
-        ## add yes no
-        yn_st = q_end.item() + 1
-        yn_end = yn_st + 2
-        seq_output_from_sp[0,yn_st.item():yn_end.item(),:] = sequence_output[0,yn_st.item():yn_end.item(),:]
+        if 'query' in g.ntypes:
+            (q_st, q_end) = g.nodes['query'].data['st_end_idx'][0]
+            seq_output_from_sp[0,q_st.item():q_end.item(),:] = sequence_output[0,q_st.item():q_end.item(),:]
+            ## add yes no
+            yn_st = q_end.item() + 1
+            yn_end = yn_st + 2
+            seq_output_from_sp[0,yn_st:yn_end,:] = sequence_output[0,yn_st:yn_end,:]
         ## sp logits
         logits2 = self.qa_outputs_from_sp(seq_output_from_sp)
         start_logits2, end_logits2 = logits2.split(1, dim=-1)
@@ -873,38 +874,42 @@ class HGNModel(BertPreTrainedModel):
         end_logits2 = end_logits2.squeeze(-1)
         
         # srl span prediction
-        seq_shape = sequence_output.shape
-        seq_output_from_srl = torch.zeros(seq_shape[0], seq_shape[1], seq_shape[2]).to(device)
-        srl_probs = srl_node_output['srl'][:,1]
-        ## input for sp span pred
-        if train:
-            sample_nodes = srl_node_output['sample_nodes']
-            topk_srl = min(5, len(sample_nodes))
-            _, topk_srl_nodes = torch.topk(srl_probs, topk_srl)
-            for st, end in g.nodes['srl'].data['st_end_idx'][sample_nodes][topk_srl_nodes]:
-                seq_output_from_srl[0,st.item():end.item(),:] = sequence_output[0,st.item():end.item(),:]
+        if srl_node_output['probs'] is not None:
+            seq_shape = sequence_output.shape
+            seq_output_from_srl = torch.zeros(seq_shape[0], seq_shape[1], seq_shape[2]).to(device)
+            srl_probs = srl_node_output['probs'][:,1]
+            ## input for sp span pred
+            if train:
+                sample_nodes = srl_node_output['sample_nodes']
+                topk_srl = min(5, len(sample_nodes))
+                _, topk_srl_nodes = torch.topk(srl_probs, topk_srl)
+                for st, end in g.nodes['srl'].data['st_end_idx'][sample_nodes][topk_srl_nodes]:
+                    seq_output_from_srl[0,st.item():end.item(),:] = sequence_output[0,st.item():end.item(),:]
+            else:
+                topk_srl = min(5, g.number_of_nodes('srl'))
+                _, topk_srl_nodes = torch.topk(srl_probs, topk_srl)
+                for st, end in g.nodes['srl'].data['st_end_idx'][topk_srl_nodes]:
+                    seq_output_from_srl[0,st.item():end.item(),:] = sequence_output[0,st.item():end.item(),:]
+            ## add query
+            if 'query' in g.ntypes:
+                (q_st, q_end) = g.nodes['query'].data['st_end_idx'][0]
+                seq_output_from_srl[0,q_st.item():q_end.item(),:] = sequence_output[0,q_st.item():q_end.item(),:]
+                ## add yes no
+                yn_st = q_end.item() + 1
+                yn_end = yn_st + 2
+                seq_output_from_srl[0,yn_st:yn_end,:] = sequence_output[0,yn_st:yn_end,:]
+            ## srl logits
+            logits3 = self.qa_outputs_from_srl(seq_output_from_srl)
+            start_logits3, end_logits3 = logits3.split(1, dim=-1)
+            start_logits3 = start_logits3.squeeze(-1)
+            end_logits3 = end_logits3.squeeze(-1)
+            # original logits + sp logits + srl
+            final_start_logits = start_logits + start_logits2 + start_logits3
+            final_end_logits = end_logits + end_logits2 + end_logits3
         else:
-            topk_sp = min(topk_srl, g.number_of_nodes('srl'))
-            _, topk_srl_nodes = torch.topk(srl_probs, topk_srl)
-            for st, end in g.nodes['srl'].data['st_end_idx'][topk_srl_nodes]:
-                seq_output_from_srl[0,st.item():end.item(),:] = sequence_output[0,st.item():end.item(),:]
-        ## add query
-        (q_st, q_end) = g.nodes['query'].data['st_end_idx'][0]
-        seq_output_from_srl[0,q_st.item():q_end.item(),:] = sequence_output[0,q_st.item():q_end.item(),:]
-        ## add yes no
-        yn_st = q_end.item() + 1
-        yn_end = yn_st + 2
-        seq_output_from_srl[0,yn_st.item():yn_end.item(),:] = sequence_output[0,yn_st.item():yn_end.item(),:]
-        ## srl logits
-        logits3 = self.qa_outputs_from_srl(seq_output_from_srl)
-        start_logits3, end_logits3 = logits3.split(1, dim=-1)
-        start_logits3 = start_logits3.squeeze(-1)
-        end_logits3 = end_logits3.squeeze(-1)
-
-
-        # original logits + sp logits
-        final_start_logits = start_logits + start_logits2 + start_logits3
-        final_end_logits = end_logits + end_logits2 + end_logits3
+            # final logits = = original + sp
+            final_start_logits = start_logits + start_logits2
+            final_end_logits = end_logits + end_logits2
         # loss
         total_loss = None
         if ((start_positions is not None and end_positions is not None) and
