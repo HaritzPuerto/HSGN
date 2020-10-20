@@ -134,7 +134,7 @@ list_metadata_files = natural_sort([f for f in listdir(training_metadata_path) i
 list_graph_metadata_files = list(zip(list_graph_files, list_metadata_files))
 
 list_graphs = []
-for (g_file, metadata_file) in tqdm(list_graph_metadata_files[:100]):
+for (g_file, metadata_file) in tqdm(list_graph_metadata_files):
     if ".bin" in g_file:
         with open(os.path.join(training_graphs_path, g_file), "rb") as f:
             graph = pickle.load(f)
@@ -837,7 +837,8 @@ class HGNModel(BertPreTrainedModel):
         g2d_graph_emb = self.graph2token_attention(g2d_graph, g2d_graph_emb)
         return g2d_graph_emb[0:offset_node].unsqueeze(0)
     
-    def span_prediction(self, g, sequence_output, start_positions, end_positions, sent_node_output, srl_node_output, train, topk_sp=3):
+    def span_prediction(self, g, sequence_output, start_positions, end_positions, sent_node_output, srl_node_output, train, topk_sp=4):
+        #print("###################################################################")
         # span pred from tokens
         logits = self.qa_outputs(sequence_output)
         start_logits, end_logits = logits.split(1, dim=-1)
@@ -864,7 +865,7 @@ class HGNModel(BertPreTrainedModel):
             (q_st, q_end) = g.nodes['query'].data['st_end_idx'][0]
             seq_output_from_sp[0,q_st.item():q_end.item(),:] = sequence_output[0,q_st.item():q_end.item(),:]
             ## add yes no
-            yn_st = q_end.item() + 1
+            yn_st = q_end.item() + 2
             yn_end = yn_st + 2
             seq_output_from_sp[0,yn_st:yn_end,:] = sequence_output[0,yn_st:yn_end,:]
         ## sp logits
@@ -889,13 +890,14 @@ class HGNModel(BertPreTrainedModel):
                 topk_srl = min(5, g.number_of_nodes('srl'))
                 _, topk_srl_nodes = torch.topk(srl_probs, topk_srl)
                 for st, end in g.nodes['srl'].data['st_end_idx'][topk_srl_nodes]:
+                    #print(tokenizer.decode(input_ids[0][st.item():end.item()]))
                     seq_output_from_srl[0,st.item():end.item(),:] = sequence_output[0,st.item():end.item(),:]
             ## add query
             if 'query' in g.ntypes:
                 (q_st, q_end) = g.nodes['query'].data['st_end_idx'][0]
                 seq_output_from_srl[0,q_st.item():q_end.item(),:] = sequence_output[0,q_st.item():q_end.item(),:]
                 ## add yes no
-                yn_st = q_end.item() + 1
+                yn_st = q_end.item() + 2
                 yn_end = yn_st + 2
                 seq_output_from_srl[0,yn_st:yn_end,:] = sequence_output[0,yn_st:yn_end,:]
             ## srl logits
@@ -906,10 +908,14 @@ class HGNModel(BertPreTrainedModel):
             # original logits + sp logits + srl
             final_start_logits = start_logits + start_logits2 + start_logits3
             final_end_logits = end_logits + end_logits2 + end_logits3
+#             final_start_logits = start_logits2
+#             final_end_logits = end_logits2
         else:
             # final logits = = original + sp
             final_start_logits = start_logits + start_logits2
             final_end_logits = end_logits + end_logits2
+#             final_start_logits = start_logits2
+#             final_end_logits = end_logits2
         # loss
         total_loss = None
         if ((start_positions is not None and end_positions is not None) and
@@ -1453,24 +1459,22 @@ class Validation():
 
 
 # %%
-# model = HGNModel.from_pretrained('/workspace/ml-workspace/thesis_git/HSGN/models')
+# model = HGNModel.from_pretrained('/workspace/ml-workspace/thesis_git/HSGN/models/sp_srl_span_pred')
 # model.cuda()
 
 # %%
-# validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
+# validation = Validation(model, hotpot_dev[:10], dev_list_graphs[:10], tokenizer,
 #                         dev_tensor_input_ids, dev_tensor_attention_masks, 
 #                         dev_tensor_token_type_ids,
 #                         dev_list_span_idx)
 # metrics = validation.do_validation()
 
 # %%
-# validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
+# validation = Validation(model, hotpot_dev[:10], dev_list_graphs[:10], tokenizer,
 #                         dev_tensor_input_ids, dev_tensor_attention_masks, 
 #                         dev_tensor_token_type_ids,
 #                         dev_list_span_idx)
 # preds = validation.get_answer_predictions(None)
-# with open('preds_no_wh_heuristics.json', 'w+') as f:
-#     json.dump(preds, f)
 
 # %%
 # metrics
@@ -1500,7 +1504,7 @@ model_path = 'models/sp_srl_span_pred'
 best_eval_em = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="regular-sp-srl span pred. eval 1K", params=PARAMS, upload_source_files=['src/models/GAT_Hierar_Tok_Node_Aggr.py']):
+with neptune.create_experiment(name="regular-sp-srl span pred", params=PARAMS, upload_source_files=['src/models/GAT_Hierar_Tok_Node_Aggr.py']):
     neptune.set_property('server', 'IRGPU11')
     neptune.set_property('training_set_path', training_path)
     neptune.set_property('dev_set_path', dev_path)
@@ -1573,7 +1577,7 @@ with neptune.create_experiment(name="regular-sp-srl span pred. eval 1K", params=
                     #############################
                     ######### Validation ########
                     #############################
-                    validation = Validation(model, hotpot_dev[:1000], dev_list_graphs, tokenizer,
+                    validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
                                             dev_tensor_input_ids, dev_tensor_attention_masks, 
                                             dev_tensor_token_type_ids,
                                             dev_list_span_idx)
