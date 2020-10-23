@@ -26,7 +26,7 @@ torch.cuda.manual_seed_all(random_seed)
 device = 'cuda'
 pretrained_weights = 'bert-base-cased'
 #pretrained_weights = 'albert-xxlarge-v2'
-data_path = '../../data/'
+data_path = 'data/'
 hotpotqa_path = 'external/'
 intermediate_train_data_path = 'interim/training/'
 intermediate_dev_data_path = 'interim/dev/'
@@ -69,13 +69,13 @@ def find_sublist_idx(x: list, y: list) -> int:
         # check if the full sublist is in the list
         if x[b:b+len(y)] == y:
             return b
-        if len(occ)-1 ==  occ.index(b):
-            # check all possible sublist candidates but not found the full sublist
-            # return the first occurrence. Be careful, it can lead to wrong results
-            # but in 99% of the cases should be fine.
-            # If we reach this case, it is becase the SRL model skipped some token
-            # i.e. B-arg0, I-arg0, O, I-arg0,...
-            return occ[0]
+#         if len(occ)-1 ==  occ.index(b):
+#             # check all possible sublist candidates but not found the full sublist
+#             # return the first occurrence. Be careful, it can lead to wrong results
+#             # but in 99% of the cases should be fine.
+#             # If we reach this case, it is becase the SRL model skipped some token
+#             # i.e. B-arg0, I-arg0, O, I-arg0,...
+#             return occ[0]
     raise Exception("Sublist not in list")
 x = [0,1,2,3,4,5,6,7]
 y = [3,4,5]
@@ -154,6 +154,10 @@ class Dataset():
             list_entities = self.list_hotpot_ner[ins_idx]
             dict_idx = list_dict_idx[ins_idx]
             g, g_metadata, list_srl_edges_metadata, list_ent2ent_metadata, span_idx = self.create_graph(hotpot_instance, list_entities, dict_idx, list_context[ins_idx]['input_ids'], ins_idx)
+            if 'srl_tmp' in g.ntypes:
+                assert g_metadata['srl_tmp']['st_end_idx'].shape[0] == g.number_of_nodes('srl_tmp')
+            if 'srl_loc' in g.ntypes:
+                assert g_metadata['srl_loc']['st_end_idx'].shape[0] == g.number_of_nodes('srl_loc')
             self.build_tests(ins_idx, g, span_idx, hotpot_instance['answer'])
             list_graphs.append(g)
             list_span_idx.append(span_idx)
@@ -452,11 +456,7 @@ class Dataset():
                 ########################################################################
                 # for each SRL triple
                 for key, triple_dict in self.dict_ins_doc_sent_srl_triples[str(ins_idx)][str(doc_idx)][str(sent_idx)].items():
-                    if 'V' not in triple_dict.keys():
-                        # we need relations
-                        continue
-                    if ('ARG0' not in triple_dict.keys()) and ('ARG1' not in triple_dict.keys()) and ('ARG2' not in triple_dict.keys()):
-                        # not well-formed triple
+                    if not self.valid_srl_triple(triple_dict):
                         continue
                     list_arg_nodes = [] # list of all arguments (node idx) in the triple
                     srl_rel = dict()
@@ -804,17 +804,7 @@ class Dataset():
                                                           list_srl2sent,
                                                           list_srl2query,
                                                           90)
-        ### Answer Type Node ###
-        list_sent2at = []
-        for sent in range(sent_node_idx):
-            list_sent2at.append((sent, 0)) # lbl: [SENT2AT]
-        list_srl2at = []
-        for srl in range(srl_node_idx):
-            list_srl2at.append((srl, 0)) # lbl: [SRL2AT]
-        list_ent2at = []
-        for ent in range(ent_node_idx):
-            list_ent2at.append((ent, 0)) # lbl: [ENT2AT]
-        at_label = ans_type(ans_str)
+        
         # make the heterogenous graph
         list_srl2self = [(v, v) for v in range(srl_node_idx)]
         # create ent rel using SRL predicates
@@ -861,6 +851,10 @@ class Dataset():
             dict_edges[('srl', 'query_srl2srl', 'srl')] = list_q_srl2srl
         if list_query2sent_pred != []:
             dict_edges['query', 'query2srl_pred', 'sent'] = list_query2sent_pred
+        if srl_tmp_node_idx > 0 and list_srl_tmp2srl != []:
+            dict_edges['srl_tmp', 'srl_tmp2self', 'srl_tmp'] = [(v, v) for v in list(range(srl_tmp_node_idx))]
+        if srl_loc_node_idx > 0 and list_srl_loc2srl != []:
+            dict_edges['srl_loc', 'srl_loc2self', 'srl_loc'] = [(v, v) for v in list(range(srl_loc_node_idx))]
         graph = dgl.heterograph(dict_edges)
         graph_metadata = dict()
         # doc metadata
@@ -881,11 +875,20 @@ class Dataset():
         # srl_loc metadata
         if list_srl_loc2srl != []:
             graph_metadata['srl_loc'] = dict()
+#             set_valid_loc = set([loc for (loc, _) in list_srl_loc2srl])
+#             set_all_loc = set(range(len(list_srl_loc_st_end_idx)))
+#             list_invalid_loc = list(set_all_loc -  set_valid_loc)
+#             list_srl_loc_st_end_idx = np.delete(list_srl_loc_st_end_idx, list_invalid_loc, axis=0)
             graph_metadata['srl_loc']['st_end_idx'] =  np.array(list_srl_loc_st_end_idx)
 #             graph_metadata['srl_loc']['list_context_idx'] = np.array(list_srl_loc_context_idx).reshape(-1,1)
         # srl_tmp metadata
         if list_srl_tmp2srl != []:
             graph_metadata['srl_tmp'] = dict()
+#             set_valid_tmp = set([tmp for (tmp, _) in list_srl_tmp2srl])
+#             set_all_tmp = set(range(len(list_srl_tmp_st_end_idx)))
+#             list_invalid_tmp = list(set_all_tmp -  set_valid_tmp)
+#             list_srl_tmp_st_end_idx = np.delete(list_srl_tmp_st_end_idx, list_invalid_tmp, axis=0)
+#             print(list_srl_tmp2srl)
             graph_metadata['srl_tmp']['st_end_idx'] =  np.array(list_srl_tmp_st_end_idx)
 #             graph_metadata['srl_tmp']['list_context_idx'] = np.array(list_srl_tmp_context_idx).reshape(-1,1) 
         # ent metadata
@@ -940,6 +943,16 @@ class Dataset():
             return False
         if ('ARG0' not in triple_dict.keys()) and ('ARG1' not in triple_dict.keys()) and ('ARG2' not in triple_dict.keys()):
             # not well-formed triple
+            return False
+        try:
+            for arg_type, arg_str in triple_dict.items():
+                arg_encoded = self.tokenizer.encode(arg_str, add_special_tokens=False)
+                arg_str = self.tokenizer.decode(arg_encoded)
+                # find location of the entity in the context (inputs ids)
+                # +sent_st 'cuz I need the index in the full context
+                # if I search using the full context instead of its sentence I may get a wrong entity (the entity may appear many times, including in the question)
+                find_sublist_idx
+        except:
             return False
         return True
   
@@ -1130,6 +1143,7 @@ train_dataset = Dataset(hotpot_train, list_hotpot_train_ner, dict_ins_doc_sent_s
  list_list_ent2ent_metadata,
  list_span_idx) = train_dataset.create_dataloader()
 
+
 # %%
 def print_ent_rel():
     (list_u, list_v, _) = list_graphs[0].all_edges(form='all', etype='ent2ent_rel')
@@ -1162,7 +1176,7 @@ for g_idx, list_dict_edge in enumerate(list_list_ent2ent_metadata):
         list_graphs[g_idx].edges['ent2ent_rel'].data['rel_type'] = torch.tensor([edge['rel_type'] for edge in list_dict_edge])
         list_graphs[g_idx].edges['ent2ent_rel'].data['span_idx'] = torch.tensor([edge['span_idx'] for edge in list_dict_edge])
 # %%
-training_path = os.path.join(data_path, 'processed/training/heterog_20201017_top4docs')
+training_path = os.path.join(data_path, 'processed/training/heterog_20201020_top4docs')
 training_graph_path = os.path.join(training_path, 'graphs')
 training_metadata_path = os.path.join(training_path, 'metadata')
 
