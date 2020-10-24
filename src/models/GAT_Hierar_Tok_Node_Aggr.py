@@ -1449,7 +1449,6 @@ with neptune.create_experiment(name="full base 2-layer gelu span pred + regulari
             random.shuffle(list_idx_curriculum_learning)
         # For each batch of training data...
         for step, idx in enumerate(tqdm(list_idx_curriculum_learning)):
-            idx = step
             b_graph = list_graphs[idx]
             neptune.log_metric('step', step)
             # forward
