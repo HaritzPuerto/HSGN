@@ -538,12 +538,18 @@ class HGNModel(BertPreTrainedModel):
         
         # span prediction
         self.num_labels = config.num_labels
-        self.qa_outputs = nn.Sequential(nn.Linear(config.hidden_size, config.hidden_size), GeLU(), nn.Dropout(dict_params['span_drop']),
-                                        nn.Linear(config.hidden_size, 2))
-        self.qa_outputs_from_sp = nn.Sequential(nn.Linear(config.hidden_size, config.hidden_size), GeLU(), nn.Dropout(dict_params['span_drop']),
-                                       nn.Linear(config.hidden_size, 2))
-        self.qa_outputs_from_srl = nn.Sequential(nn.Linear(config.hidden_size, config.hidden_size), GeLU(), nn.Dropout(dict_params['span_drop']),
-                                       nn.Linear(config.hidden_size, 2))
+        self.qa_outputs = nn.Sequential(nn.Dropout(dict_params['span_drop']),
+                                        nn.Linear(config.hidden_size, config.hidden_size),
+                                        GeLU(),
+                                        nn.Dropout(dict_params['span_drop']),
+                                        nn.Linear(config.hidden_size, 2)
+                                        )
+        self.qa_outputs_from_srl = nn.Sequential(nn.Dropout(dict_params['span_drop']),
+                                                 nn.Linear(config.hidden_size, config.hidden_size),
+                                                 GeLU(),
+                                                 nn.Dropout(dict_params['span_drop']),
+                                                 nn.Linear(config.hidden_size, 2)
+                                                )
 
         # init weights
         self.init_weights()
@@ -584,16 +590,16 @@ class HGNModel(BertPreTrainedModel):
         span_loss = None
         start_logits = None
         end_logits = None
-        span_loss, start_logits, end_logits = self.span_prediction(graph, sequence_output, 
+        span_out = self.span_prediction(graph, sequence_output, 
                                                                    start_positions, end_positions, 
                                                                    graph_out['sent'], graph_out['srl'],
-                                                                   train)
-        assert not torch.isnan(start_logits).any()
-        assert not torch.isnan(end_logits).any()  
+                                                                   train, input_ids) 
         # loss
         final_loss = 0.0
-        if span_loss is not None:
-            final_loss += self.weight_span_loss*span_loss
+        if span_out['all_span']['loss'] is not None:
+            final_loss += self.weight_span_loss*span_out['all_span']['loss']
+        if span_out['srl_span']['loss'] is not None:
+            final_loss += self.weight_span_loss*span_out['srl_span']['loss']
         if graph_out['sent']['loss'] is not None:
             final_loss += self.weight_sent_loss*graph_out['sent']['loss']
         if graph_out['srl']['loss'] is not None:
@@ -605,7 +611,7 @@ class HGNModel(BertPreTrainedModel):
                 'sent': graph_out['sent'], 
                 'ent': graph_out['ent'],
                 'srl': graph_out['srl'],
-                'span': {'loss': span_loss, 'start_logits': start_logits, 'end_logits': end_logits}}  
+                'span': span_out}  
     
     def graph_forward(self, graph, bert_context_emb, train):
         # create graph initial embedding #
@@ -837,43 +843,20 @@ class HGNModel(BertPreTrainedModel):
         g2d_graph_emb = self.graph2token_attention(g2d_graph, g2d_graph_emb)
         return g2d_graph_emb[0:offset_node].unsqueeze(0)
     
-    def span_prediction(self, g, sequence_output, start_positions, end_positions, sent_node_output, srl_node_output, train, topk_sp=4):
+    def span_prediction(self, g, sequence_output, start_positions, end_positions, sent_node_output, srl_node_output, train, input_ids, topk_sp=4):
         #print("###################################################################")
         # span pred from tokens
-        logits = self.qa_outputs(sequence_output)
-        start_logits, end_logits = logits.split(1, dim=-1)
-        start_logits = start_logits.squeeze(-1)
-        end_logits = end_logits.squeeze(-1)
+        logits1 = self.qa_outputs(sequence_output)
+        start_logits1, end_logits1 = logits1.split(1, dim=-1)
+        start_logits1 = start_logits1.squeeze(-1)
+        end_logits1 = end_logits1.squeeze(-1)
         # span prediction from sp
         seq_shape = sequence_output.shape
         seq_output_from_sp = torch.zeros(seq_shape[0], seq_shape[1], seq_shape[2]).to(device)
         sp_probs = sent_node_output['probs'][:,1]
-        ## input for sp span pred
-        if train:
-            sample_nodes = sent_node_output['sample_nodes']
-            topk_sp = min(topk_sp, len(sample_nodes))
-            _, topk_sent_nodes = torch.topk(sp_probs, topk_sp)
-            for st, end in g.nodes['sent'].data['st_end_idx'][sample_nodes][topk_sent_nodes]:
-                seq_output_from_sp[0,st.item():end.item(),:] = sequence_output[0,st.item():end.item(),:]
-        else:
-            topk_sp = min(topk_sp, g.number_of_nodes('sent'))
-            _, topk_sent_nodes = torch.topk(sp_probs, topk_sp)
-            for st, end in g.nodes['sent'].data['st_end_idx'][topk_sent_nodes]:
-                seq_output_from_sp[0,st.item():end.item(),:] = sequence_output[0,st.item():end.item(),:]
-        ## add query
-        if 'query' in g.ntypes:
-            (q_st, q_end) = g.nodes['query'].data['st_end_idx'][0]
-            seq_output_from_sp[0,q_st.item():q_end.item(),:] = sequence_output[0,q_st.item():q_end.item(),:]
-            ## add yes no
-            yn_st = q_end.item() + 2
-            yn_end = yn_st + 2
-            seq_output_from_sp[0,yn_st:yn_end,:] = sequence_output[0,yn_st:yn_end,:]
-        ## sp logits
-        logits2 = self.qa_outputs_from_sp(seq_output_from_sp)
-        start_logits2, end_logits2 = logits2.split(1, dim=-1)
-        start_logits2 = start_logits2.squeeze(-1)
-        end_logits2 = end_logits2.squeeze(-1)
-        
+        srl_span = {'loss': None, 
+                    'start_logits': torch.zeros((1, 512), device=device), 
+                    'end_logits': torch.zeros((1, 512), device=device)}
         # srl span prediction
         if srl_node_output['probs'] is not None:
             seq_shape = sequence_output.shape
@@ -897,34 +880,45 @@ class HGNModel(BertPreTrainedModel):
                 (q_st, q_end) = g.nodes['query'].data['st_end_idx'][0]
                 seq_output_from_srl[0,q_st.item():q_end.item(),:] = sequence_output[0,q_st.item():q_end.item(),:]
                 ## add yes no
-                yn_st = q_end.item() + 2
+                yn_st = q_end.item() + 1
                 yn_end = yn_st + 2
                 seq_output_from_srl[0,yn_st:yn_end,:] = sequence_output[0,yn_st:yn_end,:]
+            
+            #mask_srl = torch.tensor([sum(emb) > 0 for emb in seq_output_from_srl[0] ])
+            #print(tokenizer.decode(input_ids[0][mask_srl]))
             ## srl logits
             logits3 = self.qa_outputs_from_srl(seq_output_from_srl)
             start_logits3, end_logits3 = logits3.split(1, dim=-1)
             start_logits3 = start_logits3.squeeze(-1)
             end_logits3 = end_logits3.squeeze(-1)
+            loss_span_srl = self.loss_span_logits(start_logits3, end_logits3, start_positions, end_positions)
             # original logits + sp logits + srl
-            final_start_logits = start_logits + start_logits2 + start_logits3
-            final_end_logits = end_logits + end_logits2 + end_logits3
+#             final_start_logits = start_logits1 + start_logits3
+#             final_end_logits = end_logits1 + end_logits3
 #             final_start_logits = start_logits2
 #             final_end_logits = end_logits2
+            srl_span = {'loss': loss_span_srl, 'start_logits': start_logits3, 'end_logits': end_logits3}
         else:
+            pass
             # final logits = = original + sp
-            final_start_logits = start_logits + start_logits2
-            final_end_logits = end_logits + end_logits2
+#             final_start_logits = start_logits1
+#             final_end_logits = end_logits1
 #             final_start_logits = start_logits2
 #             final_end_logits = end_logits2
         # loss
+        loss_all_span = self.loss_span_logits(start_logits1, end_logits1, start_positions, end_positions)
+        return {'all_span': {'loss': loss_all_span, 'start_logits': start_logits1, 'end_logits': end_logits1},
+                'srl_span': srl_span}
+    
+    def loss_span_logits(self, start_logits, end_logits, start_positions, end_positions):
         total_loss = None
         if ((start_positions is not None and end_positions is not None) and
             (start_positions != -1 and end_positions != -1)):
             loss_fct = nn.CrossEntropyLoss()
-            start_loss = loss_fct(final_start_logits, start_positions)
-            end_loss = loss_fct(final_end_logits, end_positions)
+            start_loss = loss_fct(start_logits, start_positions)
+            end_loss = loss_fct(end_logits, end_positions)
             total_loss = (start_loss + end_loss) / 2
-        return (total_loss,  final_start_logits, final_end_logits)
+        return total_loss
 
 
 # %%
@@ -1320,8 +1314,9 @@ class Validation():
                 'ent': output_ent, 'srl': output_srl}
     
     def __get_pred_ans_str(self, input_ids, output, max_ans_len):
-        st, end = self.__get_st_end_span_idx(output['span']['start_logits'].squeeze(),
-                                             output['span']['end_logits'].squeeze(), max_ans_len)
+        start_logits = output['span']['all_span']['start_logits'].squeeze() + output['span']['srl_span']['start_logits'].squeeze()
+        end_logits = output['span']['all_span']['end_logits'].squeeze() + output['span']['srl_span']['end_logits'].squeeze()
+        st, end = self.__get_st_end_span_idx(start_logits, end_logits, max_ans_len, input_ids)
         return self.__get_str_span(input_ids, st, end)
     
     def __get_ent_str(self, graph, input_ids, output):
@@ -1354,7 +1349,7 @@ class Validation():
             best_indexes.append(index_and_score[i][0])
         return best_indexes
     
-    def __get_st_end_span_idx(self, start_logits, end_logits, max_answer_length = 30):
+    def __get_st_end_span_idx(self, start_logits, end_logits, max_answer_length = 30, input_ids=None):
         start_indexes = self.__get_best_indexes(start_logits, 10)
         end_indexes = self.__get_best_indexes(end_logits, 10)
         list_candidates = []
@@ -1378,7 +1373,10 @@ class Validation():
         if len(list_scores) == 0:
             return (0,0)
         else:
+#             for i, (st, end) in enumerate(list_candidates):
+#                 print(i, self.__get_str_span(input_ids, st, end), list_scores[i].item())
             best_span_idx = list_scores.index(max(list_scores))
+            #print("best idx", best_span_idx)
             return list_candidates[best_span_idx]
 
     def __findWHword(self, sentence):
@@ -1459,6 +1457,7 @@ class Validation():
 
 
 # %%
+# torch.cuda.empty_cache()
 # model = HGNModel.from_pretrained('/workspace/ml-workspace/thesis_git/HSGN/models/sp_srl_span_pred')
 # model.cuda()
 
@@ -1504,7 +1503,7 @@ model_path = 'models/sp_srl_span_pred'
 best_eval_em = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="regular-sp-srl span pred", params=PARAMS, upload_source_files=['src/models/GAT_Hierar_Tok_Node_Aggr.py']):
+with neptune.create_experiment(name="full all span & srl span in 1 MLP", params=PARAMS, upload_source_files=['src/models/GAT_Hierar_Tok_Node_Aggr.py']):
     neptune.set_property('server', 'IRGPU11')
     neptune.set_property('training_set_path', training_path)
     neptune.set_property('dev_set_path', dev_path)
@@ -1553,7 +1552,8 @@ with neptune.create_experiment(name="regular-sp-srl span pred", params=PARAMS, u
             sent_loss = output['sent']['loss']
             ent_loss = output['ent']['loss']
             srl_loss = output['srl']['loss']
-            span_loss = output['span']['loss']
+            span_loss = output['span']['all_span']['loss']
+            srl_span_loss = output['span']['srl_span']['loss']
             # neptune
             neptune.log_metric("total_loss", total_loss.detach().item())
             if sent_loss is not None:
@@ -1564,6 +1564,8 @@ with neptune.create_experiment(name="regular-sp-srl span pred", params=PARAMS, u
                 neptune.log_metric("ent_loss", ent_loss.detach().item())
             if span_loss is not None:
                 neptune.log_metric("span_loss", span_loss.detach().item())
+            if srl_span_loss is not None:
+                neptune.log_metric("srl_span_loss", srl_span_loss.detach().item())
 
             # backpropagation
             total_loss.backward()
@@ -1616,7 +1618,6 @@ with neptune.create_experiment(name="regular-sp-srl span pred", params=PARAMS, u
                                 dev_tensor_token_type_ids,
                                 dev_list_span_idx)
         metrics = validation.do_validation()
-        print(metrics)
         model.train()
         record_eval_metric(neptune, metrics)
 
