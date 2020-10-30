@@ -134,7 +134,7 @@ list_metadata_files = natural_sort([f for f in listdir(training_metadata_path) i
 list_graph_metadata_files = list(zip(list_graph_files, list_metadata_files))
 
 list_graphs = []
-for (g_file, metadata_file) in tqdm(list_graph_metadata_files[:10]):
+for (g_file, metadata_file) in tqdm(list_graph_metadata_files):
     if ".bin" in g_file:
         with open(os.path.join(training_graphs_path, g_file), "rb") as f:
             graph = pickle.load(f)
@@ -153,7 +153,7 @@ list_metadata_files = natural_sort([f for f in listdir(dev_metadata_path) if isf
 list_graph_metadata_files = list(zip(list_graph_files, list_metadata_files))
 
 dev_list_graphs = []
-for (g_file, metadata_file) in tqdm(list_graph_metadata_files[:10]):
+for (g_file, metadata_file) in tqdm(list_graph_metadata_files):
     if ".bin" in g_file:
         with open(os.path.join(dev_graphs_path, g_file), "rb") as f:
             graph = pickle.load(f)
@@ -1371,8 +1371,8 @@ class Validation():
                 'ent': output_ent, 'srl': output_srl}
     
     def __get_pred_ans_str(self, input_ids, output, max_ans_len):
-        start_logits = output['span']['all_span']['start_logits'].squeeze() + output['span']['srl_span']['start_logits'].squeeze()
-        end_logits = output['span']['all_span']['end_logits'].squeeze() + output['span']['srl_span']['end_logits'].squeeze()
+        start_logits = output['span']['start_logits'].squeeze()
+        end_logits = output['span']['end_logits'].squeeze()
         st, end = self.__get_st_end_span_idx(start_logits, end_logits, max_ans_len, input_ids)
         return self.__get_str_span(input_ids, st, end)
     
@@ -1587,8 +1587,7 @@ with neptune.create_experiment(name="answer type pred + srl masking in logits ",
         if epoch_i > 0:
             random.shuffle(list_idx_curriculum_learning)
         # For each batch of training data...
-        for step, idx in enumerate(tqdm(list_idx_curriculum_learning[:10])):
-            idx = step
+        for step, idx in enumerate(tqdm(list_idx_curriculum_learning)):
             b_graph = list_graphs[idx]
             neptune.log_metric('step', step)
             # forward
@@ -1634,22 +1633,23 @@ with neptune.create_experiment(name="answer type pred + srl masking in logits ",
                 scheduler.step()
                 model.zero_grad()
                 
-                # if (step +1) % 10000 == 0:
-                #     #############################
-                #     ######### Validation ########
-                #     #############################
-                #     validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
-                #                             dev_tensor_input_ids, dev_tensor_attention_masks, 
-                #                             dev_tensor_token_type_ids,
-                #                             dev_list_span_idx)
-                #     metrics = validation.do_validation()
-                #     model.train()
-                #     record_eval_metric(neptune, metrics)
+                
+                if (step +1) == 10000:
+                    #############################
+                    ######### Validation ########
+                    #############################
+                    validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
+                                            dev_tensor_input_ids, dev_tensor_attention_masks, 
+                                            dev_tensor_token_type_ids,
+                                            dev_list_span_idx)
+                    metrics = validation.do_validation()
+                    model.train()
+                    record_eval_metric(neptune, metrics)
 
-                #     curr_em = metrics['ans_em']
-                #     if  curr_em > best_eval_em:
-                #         best_eval_em = curr_em
-                #         model.save_pretrained(model_path) 
+                    curr_em = metrics['ans_em']
+                    if  curr_em > best_eval_em:
+                        best_eval_em = curr_em
+                        model.save_pretrained(model_path) 
             total_train_loss += total_loss.detach().item()
 
             # free-up gpu memory
