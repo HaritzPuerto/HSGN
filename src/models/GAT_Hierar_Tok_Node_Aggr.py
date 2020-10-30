@@ -596,10 +596,8 @@ class HGNModel(BertPreTrainedModel):
                                                                    train, input_ids) 
         # loss
         final_loss = 0.0
-        if span_out['all_span']['loss'] is not None:
-            final_loss += self.weight_span_loss*span_out['all_span']['loss']
-        if span_out['srl_span']['loss'] is not None:
-            final_loss += self.weight_span_loss*span_out['srl_span']['loss']
+        if span_out['loss'] is not None:
+            final_loss += self.weight_span_loss*span_out['loss']
         if graph_out['sent']['loss'] is not None:
             final_loss += self.weight_sent_loss*graph_out['sent']['loss']
         if graph_out['srl']['loss'] is not None:
@@ -858,9 +856,12 @@ class HGNModel(BertPreTrainedModel):
                     'start_logits': torch.zeros((1, 512), device=device), 
                     'end_logits': torch.zeros((1, 512), device=device)}
         # srl span prediction
-        if srl_node_output['probs'] is not None:
-            seq_shape = sequence_output.shape
-            seq_output_from_srl = torch.zeros(seq_shape[0], seq_shape[1], seq_shape[2]).to(device)
+        if srl_node_output['probs'] is not None:            
+            #mask_srl = torch.tensor([sum(emb) > 0 for emb in seq_output_from_srl[0] ])
+            #print(tokenizer.decode(input_ids[0][mask_srl]))
+            ## srl logits
+            logits2 = self.qa_outputs_from_srl(sequence_output)
+            # mask using SRL
             srl_probs = srl_node_output['probs'][:,1]
             ## input for sp span pred
             if train:
@@ -868,47 +869,41 @@ class HGNModel(BertPreTrainedModel):
                 topk_srl = min(5, len(sample_nodes))
                 _, topk_srl_nodes = torch.topk(srl_probs, topk_srl)
                 for st, end in g.nodes['srl'].data['st_end_idx'][sample_nodes][topk_srl_nodes]:
-                    seq_output_from_srl[0,st.item():end.item(),:] = sequence_output[0,st.item():end.item(),:]
+                    logits2[0,st.item():end.item(),:] = torch.zeros((logits2[0,st.item():end.item(),:].shape), device=device)
             else:
                 topk_srl = min(5, g.number_of_nodes('srl'))
                 _, topk_srl_nodes = torch.topk(srl_probs, topk_srl)
                 for st, end in g.nodes['srl'].data['st_end_idx'][topk_srl_nodes]:
                     #print(tokenizer.decode(input_ids[0][st.item():end.item()]))
-                    seq_output_from_srl[0,st.item():end.item(),:] = sequence_output[0,st.item():end.item(),:]
+                    logits2[0,st.item():end.item(),:] = torch.zeros((logits2[0,st.item():end.item(),:].shape), device=device)
             ## add query
             if 'query' in g.ntypes:
                 (q_st, q_end) = g.nodes['query'].data['st_end_idx'][0]
-                seq_output_from_srl[0,q_st.item():q_end.item(),:] = sequence_output[0,q_st.item():q_end.item(),:]
+                logits2[0,q_st.item():q_end.item(),:] = torch.zeros((logits2[0,q_st.item():q_end.item(),:].shape), device=device)
                 ## add yes no
                 yn_st = q_end.item() + 1
                 yn_end = yn_st + 2
-                seq_output_from_srl[0,yn_st:yn_end,:] = sequence_output[0,yn_st:yn_end,:]
-            
-            #mask_srl = torch.tensor([sum(emb) > 0 for emb in seq_output_from_srl[0] ])
-            #print(tokenizer.decode(input_ids[0][mask_srl]))
-            ## srl logits
-            logits3 = self.qa_outputs_from_srl(seq_output_from_srl)
-            start_logits3, end_logits3 = logits3.split(1, dim=-1)
-            start_logits3 = start_logits3.squeeze(-1)
-            end_logits3 = end_logits3.squeeze(-1)
-            loss_span_srl = self.loss_span_logits(start_logits3, end_logits3, start_positions, end_positions)
+                logits2[0,yn_st:yn_end,:] = torch.zeros((logits2[0,yn_st:yn_end,:].shape), device=device)
+
+
+            start_logits2, end_logits2 = logits2.split(1, dim=-1)
+            start_logits2 = start_logits2.squeeze(-1)
+            end_logits2 = end_logits2.squeeze(-1)
+            final_start_logits = start_logits1 + start_logits2
+            final_end_logits = end_logits1 + end_logits2
+            # loss_span_srl = self.loss_span_logits(start_logits2, end_logits2, start_positions, end_positions)
             # original logits + sp logits + srl
-#             final_start_logits = start_logits1 + start_logits3
-#             final_end_logits = end_logits1 + end_logits3
-#             final_start_logits = start_logits2
-#             final_end_logits = end_logits2
-            srl_span = {'loss': loss_span_srl, 'start_logits': start_logits3, 'end_logits': end_logits3}
+            # srl_span = {'loss': loss_span_srl, 'start_logits': start_logits2, 'end_logits': end_logits2}
         else:
             pass
             # final logits = = original + sp
-#             final_start_logits = start_logits1
-#             final_end_logits = end_logits1
+            final_start_logits = start_logits1
+            final_end_logits = end_logits1
 #             final_start_logits = start_logits2
 #             final_end_logits = end_logits2
         # loss
-        loss_all_span = self.loss_span_logits(start_logits1, end_logits1, start_positions, end_positions)
-        return {'all_span': {'loss': loss_all_span, 'start_logits': start_logits1, 'end_logits': end_logits1},
-                'srl_span': srl_span}
+        loss_all_span = self.loss_span_logits(final_start_logits, final_end_logits, start_positions, end_positions)
+        return {'loss': loss_all_span, 'start_logits': final_start_logits, 'end_logits': final_end_logits}
     
     def loss_span_logits(self, start_logits, end_logits, start_positions, end_positions):
         total_loss = None
