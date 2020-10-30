@@ -42,7 +42,7 @@ torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
 # %%
-data_path = "../../data/"
+data_path = "data/"
 hotpot_qa_path = os.path.join(data_path, "external")
 
 with open(os.path.join(hotpot_qa_path, "hotpot_train_v1.1.json"), "r") as f:
@@ -74,8 +74,8 @@ for idx in set_hard:
 
 # %%
 device = 'cuda'
-#pretrained_weights = 'bert-base-cased'
-pretrained_weights = 'bert-large-cased-whole-word-masking'
+pretrained_weights = 'bert-base-cased'
+#pretrained_weights = 'bert-large-cased-whole-word-masking'
 #pretrained_weights = 'albert-xxlarge-v2'
 # ## HotpotQA Processing
 
@@ -134,7 +134,7 @@ list_metadata_files = natural_sort([f for f in listdir(training_metadata_path) i
 list_graph_metadata_files = list(zip(list_graph_files, list_metadata_files))
 
 list_graphs = []
-for (g_file, metadata_file) in tqdm(list_graph_metadata_files):
+for (g_file, metadata_file) in tqdm(list_graph_metadata_files[:10]):
     if ".bin" in g_file:
         with open(os.path.join(training_graphs_path, g_file), "rb") as f:
             graph = pickle.load(f)
@@ -153,7 +153,7 @@ list_metadata_files = natural_sort([f for f in listdir(dev_metadata_path) if isf
 list_graph_metadata_files = list(zip(list_graph_files, list_metadata_files))
 
 dev_list_graphs = []
-for (g_file, metadata_file) in tqdm(list_graph_metadata_files):
+for (g_file, metadata_file) in tqdm(list_graph_metadata_files[:10]):
     if ".bin" in g_file:
         with open(os.path.join(dev_graphs_path, g_file), "rb") as f:
             graph = pickle.load(f)
@@ -928,7 +928,7 @@ class HGNModel(BertPreTrainedModel):
 #             final_end_logits = end_logits2
         # loss
         loss_all_span = self.loss_span_logits(final_start_logits, final_end_logits, start_positions, end_positions)
-        return {'loss': loss_all_span, 'start_logits': final_start_logits, 'end_logits': final_end_logits}
+        return loss_all_span, final_start_logits, final_end_logits
     
     def loss_span_logits(self, start_logits, end_logits, start_positions, end_positions):
         total_loss = None
@@ -940,6 +940,9 @@ class HGNModel(BertPreTrainedModel):
             total_loss = (start_loss + end_loss) / 2
         return total_loss
 
+
+# %%
+torch.cuda.empty_cache()
 
 # %%
 
@@ -1584,7 +1587,8 @@ with neptune.create_experiment(name="answer type pred + srl masking in logits ",
         if epoch_i > 0:
             random.shuffle(list_idx_curriculum_learning)
         # For each batch of training data...
-        for step, idx in enumerate(tqdm(list_idx_curriculum_learning)):
+        for step, idx in enumerate(tqdm(list_idx_curriculum_learning[:10])):
+            idx = step
             b_graph = list_graphs[idx]
             neptune.log_metric('step', step)
             # forward
