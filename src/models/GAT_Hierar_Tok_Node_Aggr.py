@@ -45,7 +45,7 @@ torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
 # %%
-data_path = "../../data/"
+data_path = "data/"
 hotpot_qa_path = os.path.join(data_path, "external")
 
 with open(os.path.join(hotpot_qa_path, "hotpot_train_v1.1.json"), "r") as f:
@@ -1441,33 +1441,33 @@ class Validation():
         metrics['joint_recall'] += joint_recall
 
 
-# %%
-model = HGNModel.from_pretrained('../../models/ans_type_pred')
-model.cuda()
+# # %%
+# model = HGNModel.from_pretrained('../../models/ans_type_pred')
+# model.cuda()
 
-# %%
-validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
-                                            dev_tensor_input_ids, dev_tensor_attention_masks, 
-                                            dev_tensor_token_type_ids,
-                                            dev_list_span_idx)
-preds = validation.get_answer_predictions(None)
+# # %%
+# validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
+#                                             dev_tensor_input_ids, dev_tensor_attention_masks, 
+#                                             dev_tensor_token_type_ids,
+#                                             dev_list_span_idx)
+# preds = validation.get_answer_predictions(None)
 
-# %%
-list(preds['answer'].items())[:50]
+# # %%
+# list(preds['answer'].items())[:50]
 
-# %%
-with open('../../preds_ans_type_pred.json', 'w+') as f:
-    json.dump(preds, f)
+# # %%
+# with open('../../preds_ans_type_pred.json', 'w+') as f:
+#     json.dump(preds, f)
 
-# %%
-validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
-                        dev_tensor_input_ids, dev_tensor_attention_masks, 
-                        dev_tensor_token_type_ids,
-                        dev_list_span_idx)
-metrics = validation.do_validation()
+# # %%
+# validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
+#                         dev_tensor_input_ids, dev_tensor_attention_masks, 
+#                         dev_tensor_token_type_ids,
+#                         dev_list_span_idx)
+# metrics = validation.do_validation()
 
-# %%
-metrics
+# # %%
+# metrics
 
 # %%
 # validation = Validation(model, hotpot_dev, dev_list_graphs[:10], tokenizer,
