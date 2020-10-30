@@ -704,6 +704,9 @@ class HGNModel(BertPreTrainedModel):
             total_loss = (start_loss + end_loss) / 2
         return (total_loss,  start_logits, end_logits)
 
+import en_core_web_sm
+
+wh_ans_len = {'which': 25, 'what':25, 'who':20, 'when':10, 'how':15, 'where':15, 'how many': 10, None: 15}
 class Validation():
 
     def __init__(self, model, dataset, validation_dataloader,
@@ -711,13 +714,69 @@ class Validation():
         self.model = model
         self.model.eval()
         self.dataset = dataset
+        self.nlp = en_core_web_sm.load()
         self.validation_dataloader = validation_dataloader
         self.tensor_input_ids = tensor_input_ids
         self.tensor_attention_masks = tensor_attention_masks
         self.tensor_token_type_ids = tensor_token_type_ids
         self.tokenizer = BertTokenizer.from_pretrained(pretrained_weights, 
                                                        do_basic_tokenize=False, clean_text=False)
-
+        
+    def do_validation(self):       
+        metrics = {'validation_loss': 0, 
+                   'ans_em': 0, 'ans_f1': 0, 'ans_prec': 0 , 'ans_recall': 0,
+                   'sp_em': 0, 'sp_f1': 0, 'sp_prec': 0, 'sp_recall': 0,
+                   'joint_em': 0, 'joint_f1': 0, 'joint_prec': 0, 'joint_recall': 0, 
+                   'srl_em': 0, 'srl_f1': 0, 'srl_prec': 0, 'srl_recall': 0,
+                   'srl_recall@1': 0, 'srl_recall@3': 0, 'srl_recall@5': 0,
+                   'ent_em': 0, 'ent_f1': 0, 'ent_prec': 0, 'ent_recall': 0,
+                   'ent_recall@1': 0, 'ent_recall@3': 0, 'ent_recall@5': 0,
+                   }
+        # Evaluate data for one epoch       
+        num_valid_examples = 0
+        for step, b_graph in enumerate(tqdm(self.validation_dataloader)):
+            num_valid_examples += 1
+            with torch.no_grad():
+                output = self.model(b_graph,
+                               input_ids=self.tensor_input_ids[step].unsqueeze(0).to(device),
+                               attention_mask=self.tensor_attention_masks[step].unsqueeze(0).to(device),
+                               token_type_ids=self.tensor_token_type_ids[step].unsqueeze(0).to(device), 
+                               start_positions=torch.tensor([self.list_span_idx[step][0]], device='cuda'),
+                               end_positions=torch.tensor([self.list_span_idx[step][1]], device='cuda'), train=False)
+                
+            # Accumulate the validation loss.
+            metrics['validation_loss'] += output['loss'].item()
+            # Sentence evaluation
+            sent_labels = output['sent']['lbl']
+            prediction_sent = torch.argmax(output['sent']['probs'], dim=1)
+            sp_em, sp_prec, sp_recall = self.update_sp_metrics(metrics, prediction_sent, sent_labels)
+            # srl
+            prediction_srl = torch.argmax(output['srl']['probs'], dim=1)
+            srl_labels = output['srl']['lbl']
+            self.update_srl_metrics(metrics, prediction_srl, srl_labels, output['srl']['probs'][:,1])
+            # ent
+            if output['ent']['probs'] is not None:
+                prediction_ent = torch.argmax(output['ent']['probs'], dim=1)
+                ent_labels = output['ent']['lbl']
+                self.update_ent_metrics(metrics, prediction_ent, ent_labels, output['ent']['probs'][:,1])
+            # answer span prediction
+            ## wh type
+            query = self.dataset[step]['question']
+            wh = self.__findWHword(query)
+            max_ans_len = wh_ans_len[wh]
+            golden_ans = self.dataset[step]['answer']
+            predicted_ans = ""
+            predicted_ans = self.__get_pred_ans_str(self.tensor_input_ids[step], output, max_ans_len)
+            ans_em, ans_prec, ans_recall = self.update_answer_metrics(metrics, predicted_ans, golden_ans)
+            # joint
+            self.update_joint_metrics(metrics, ans_em, ans_prec, ans_recall, sp_em, sp_prec, sp_recall)                
+            
+        #N = len(self.validation_dataloader)
+        N = num_valid_examples
+        for k in metrics.keys():
+            metrics[k] /= N
+        return metrics
+    
     def get_answer_predictions(self, dict_ins2dict_doc2pred):
         output_pred_sp = {}
         output_predictions_ans = {}
@@ -728,10 +787,13 @@ class Validation():
                                attention_mask=self.tensor_attention_masks[step].unsqueeze(0).to(device),
                                token_type_ids=self.tensor_token_type_ids[step].unsqueeze(0).to(device), 
                                train=False)
+            _id = self.dataset[step]['_id']
+            query = self.dataset[step]['question']
+            wh = self.__findWHword(query)
+            max_ans_len = wh_ans_len[wh]
             #answer
             predicted_ans = ""
-            predicted_ans = self.__get_pred_ans_str(self.tensor_input_ids[step], output)
-            _id = self.dataset[step]['_id']
+            predicted_ans = self.__get_pred_ans_str(self.tensor_input_ids[step], output, max_ans_len)
             output_predictions_ans[_id] = predicted_ans
             #sp
             prediction_sent = torch.argmax(output['sent']['probs'], dim=1)
@@ -748,10 +810,10 @@ class Validation():
                     output_pred_sp[_id].append([dict_sent_num2str[i]['doc_title'],
                                                 dict_sent_num2str[i]['sent']])
         return {'answer': output_predictions_ans, 'sp': output_pred_sp}
-
-    def __get_pred_ans_str(self, input_ids, output):
+    
+    def __get_pred_ans_str(self, input_ids, output, max_ans_len):
         st, end = self.__get_st_end_span_idx(output['span']['start_logits'].squeeze(),
-                                             output['span']['end_logits'].squeeze())
+                                             output['span']['end_logits'].squeeze(), max_ans_len)
         return self.__get_str_span(input_ids, st, end)
 
     def __get_str_span(self, input_ids, st, end):
@@ -771,6 +833,8 @@ class Validation():
     def __get_st_end_span_idx(self, start_logits, end_logits, max_answer_length = 30):
         start_indexes = self.__get_best_indexes(start_logits, 10)
         end_indexes = self.__get_best_indexes(end_logits, 10)
+        list_candidates = []
+        list_scores = []
         for start_index in start_indexes:
             for end_index in end_indexes:
                 # We could hypothetically create invalid predictions, e.g., predict
@@ -785,5 +849,32 @@ class Validation():
                 length = end_index - start_index + 1
                 if length > max_answer_length:
                     continue
-                return (start_index, end_index)
-        return (0, 0)
+                list_scores.append(start_logits[start_index] + end_logits[end_index])
+                list_candidates.append((start_index, end_index))
+        if len(list_scores) == 0:
+            return (0,0)
+        else:
+            best_span_idx = list_scores.index(max(list_scores))
+            return list_candidates[best_span_idx]
+
+    def __findWHword(self, sentence):
+        candidate = ['when', 'how', 'where', 'which', 'what', 'who', 'how many']
+        sentence = sentence.lower()
+        doc = self.nlp(sentence)
+        if 'how' in sentence.split() and 'how many' in sentence:
+            return 'how many'
+        for w in reversed(doc):
+            if w.pos_ == 'NN': continue
+            else:
+                for can in candidate:
+                    if can in w.text:
+                        return can
+                break
+        whs = []
+        for idx, token in enumerate(doc):
+            for can in candidate:
+                if can in token.text:
+                    return can
+        if 'name' in sentence.lower() or doc[-1].lemma_ == 'be' or doc[-1].pos_ == 'ADP':
+            return 'what'
+        return None

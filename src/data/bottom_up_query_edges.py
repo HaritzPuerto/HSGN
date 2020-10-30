@@ -26,7 +26,7 @@ torch.cuda.manual_seed_all(random_seed)
 device = 'cuda'
 pretrained_weights = 'bert-base-cased'
 #pretrained_weights = 'albert-xxlarge-v2'
-data_path = 'data/'
+data_path = '../../data/'
 hotpotqa_path = 'external/'
 intermediate_train_data_path = 'interim/training/'
 intermediate_dev_data_path = 'interim/dev/'
@@ -60,13 +60,13 @@ def find_sublist_idx(x: list, y: list) -> int:
         # check if the full sublist is in the list
         if x[b:b+len(y)] == y:
             return b
-        if len(occ)-1 ==  occ.index(b):
-            # check all possible sublist candidates but not found the full sublist
-            # return the first occurrence. Be careful, it can lead to wrong results
-            # but in 99% of the cases should be fine.
-            # If we reach this case, it is becase the SRL model skipped some token
-            # i.e. B-arg0, I-arg0, O, I-arg0,...
-            return occ[0]
+#         if len(occ)-1 ==  occ.index(b):
+#             # check all possible sublist candidates but not found the full sublist
+#             # return the first occurrence. Be careful, it can lead to wrong results
+#             # but in 99% of the cases should be fine.
+#             # If we reach this case, it is becase the SRL model skipped some token
+#             # i.e. B-arg0, I-arg0, O, I-arg0,...
+#             return occ[0]
     raise Exception("Sublist not in list")
 x = [0,1,2,3,4,5,6,7]
 y = [3,4,5]
@@ -1188,12 +1188,10 @@ torch.save(tensor_input_ids, os.path.join(training_path, 'tensor_input_ids.p'))
 torch.save(tensor_token_type_ids, os.path.join(training_path, 'tensor_token_type_ids.p'))
 torch.save(tensor_attention_masks, os.path.join(training_path, 'tensor_attention_masks.p'))
 
-# %%
 with open(os.path.join(training_path, 'list_span_idx.p'), 'wb') as f:
     pickle.dump(list_span_idx, f)
 
-
-# # %%
+# %%
 # dev data
 with open(os.path.join(data_path, hotpotqa_path, "hotpot_dev_distractor_v1.json"), "r") as f:
     hotpot_dev = json.load(f)
@@ -1208,7 +1206,7 @@ with open(os.path.join(data_path, intermediate_train_data_path, "list_ent_query_
 print("Dev data loaded")
 
 # %%
-dev_dataset = Dataset(hotpot_dev[0:10], list_hotpot_dev_ner, dict_ins_doc_sent_srl_triples_dev,
+dev_dataset = Dataset(hotpot_dev, list_hotpot_dev_ner, dict_ins_doc_sent_srl_triples_dev,
                       dict_ins_query_srl_triples_dev, list_ent_query_dev, batch_size=1)
 (list_graphs, 
  list_g_metadata,
@@ -1237,7 +1235,7 @@ tensor_token_type_ids = torch.tensor(list_token_type_ids)
 tensor_attention_masks = torch.tensor(list_attention_masks)
 
 # %%
-dev_path = os.path.join(data_path, 'processed/dev/heterog_20201007_query_edges_albert-xxlarge-v2')
+dev_path = os.path.join(data_path, 'processed/dev/heterog_query_edges_sae_doc_filter_20201023')
 dev_graph_path = os.path.join(dev_path, 'graphs')
 dev_metadata_path = os.path.join(dev_path, 'metadata')
 
