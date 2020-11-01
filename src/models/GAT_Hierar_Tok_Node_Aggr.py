@@ -77,8 +77,8 @@ for idx in set_hard:
 
 # %%
 device = 'cuda'
-#pretrained_weights = 'bert-base-cased'
-pretrained_weights = 'bert-large-cased-whole-word-masking'
+pretrained_weights = 'bert-base-cased'
+#pretrained_weights = 'bert-large-cased-whole-word-masking'
 #pretrained_weights = 'albert-xxlarge-v2'
 # ## HotpotQA Processing
 
@@ -215,8 +215,8 @@ class LabelSmoothingLoss(nn.Module):
 
 
 # %%
-loss_fn = LabelSmoothingLoss()
-
+#loss_fn = LabelSmoothingLoss()
+loss_fn = nn.CrossEntropyLoss()
 # %%
 class NodeNorm(nn.Module):
     def __init__(self, unbiased=False, eps=1e-5):
@@ -955,7 +955,7 @@ optimizer = AdamW(model.parameters(),
 from transformers import get_linear_schedule_with_warmup, get_cosine_with_hard_restarts_schedule_with_warmup
 
 # Number of training epochs. The BERT authors recommend between 2 and 4. 
-epochs = 3
+epochs = 2
 
 # Total number of training steps is [number of batches] x [number of epochs]. 
 # (Note that this is not the same as the number of training samples).
@@ -989,7 +989,7 @@ neptune.set_project('haritz/srl-pred')
 PARAMS = {"num_epoch": epochs, 
           'lr': lr, 
           'pretrained_weights': pretrained_weights,
-          'loss_fn': 'crossentropy_label_smoothing', 
+          'loss_fn': 'crossentropy', 
           #'validation_size': len(validation_dataloader)*val_batch_size , 
           'random_seed': random_seed,
           'total_steps': total_steps, 
@@ -1508,12 +1508,12 @@ def record_eval_metric(neptune, metrics):
 
 
 # %%
-model_path = 'models/ans_type_pred_large'
+model_path = 'models/ans_type_pred_lwo_lbl_smoothing'
 
 best_eval_em = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="LARGE answer type pred SAE", params=PARAMS, upload_source_files=['src/models/GAT_Hierar_Tok_Node_Aggr.py']):
+with neptune.create_experiment(name="561 w/o lbl smoothing", params=PARAMS, upload_source_files=['src/models/GAT_Hierar_Tok_Node_Aggr.py']):
     neptune.set_property('server', 'nipa')
     neptune.set_property('training_set_path', training_path)
     neptune.set_property('dev_set_path', dev_path)
@@ -1586,22 +1586,22 @@ with neptune.create_experiment(name="LARGE answer type pred SAE", params=PARAMS,
                 scheduler.step()
                 model.zero_grad()
                 
-                if (step +1) % 10000 == 0:
-                    #############################
-                    ######### Validation ########
-                    #############################
-                    validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
-                                            dev_tensor_input_ids, dev_tensor_attention_masks, 
-                                            dev_tensor_token_type_ids,
-                                            dev_list_span_idx)
-                    metrics = validation.do_validation()
-                    model.train()
-                    record_eval_metric(neptune, metrics)
+                # if (step +1) % 10000 == 0:
+                #     #############################
+                #     ######### Validation ########
+                #     #############################
+                #     validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
+                #                             dev_tensor_input_ids, dev_tensor_attention_masks, 
+                #                             dev_tensor_token_type_ids,
+                #                             dev_list_span_idx)
+                #     metrics = validation.do_validation()
+                #     model.train()
+                #     record_eval_metric(neptune, metrics)
 
-                    curr_em = metrics['ans_em']
-                    if  curr_em > best_eval_em:
-                        best_eval_em = curr_em
-                        model.save_pretrained(model_path) 
+                #     curr_em = metrics['ans_em']
+                #     if  curr_em > best_eval_em:
+                #         best_eval_em = curr_em
+                #         model.save_pretrained(model_path) 
             total_train_loss += total_loss.detach().item()
 
             # free-up gpu memory
