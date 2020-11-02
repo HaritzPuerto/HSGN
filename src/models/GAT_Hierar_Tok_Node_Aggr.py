@@ -45,7 +45,7 @@ torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
 # %%
-data_path = "../../data/"
+data_path = "data/"
 hotpot_qa_path = os.path.join(data_path, "external")
 
 with open(os.path.join(hotpot_qa_path, "hotpot_train_v1.1.json"), "r") as f:
@@ -77,8 +77,8 @@ for idx in set_hard:
 
 # %%
 device = 'cuda'
-#pretrained_weights = 'bert-base-cased'
-pretrained_weights = 'bert-large-cased-whole-word-masking'
+pretrained_weights = 'bert-base-cased'
+#pretrained_weights = 'bert-large-cased-whole-word-masking'
 #pretrained_weights = 'albert-xxlarge-v2'
 # ## HotpotQA Processing
 
@@ -293,6 +293,8 @@ class HeteroRGCNLayer(nn.Module):
         self.common_space_trans = nn.Linear(in_size, out_size)
         
         self.gru_node2tok = nn.GRU(in_size, out_size)
+        self.forget_gate = nn.Linear(in_size, 1)
+        self.softmax = torch.nn.Softmax(-1)
         
         self.feat_drop = nn.Dropout(feat_drop)
         self.attn_drop = nn.Dropout(attn_drop)
@@ -398,14 +400,19 @@ class HeteroRGCNLayer(nn.Module):
         if 'ent' in G.ntypes:
             G['ent2tok'].update_all(self.message_func_2tok, fn.sum('m', 'h_ent'))
         #batched all tokens since we want to put into the GRU (srl, ent, hidden=tok) so batch size = 512
-        h_tok = G.nodes['tok'].data['h'].view(1,-1,self.in_size)
-        h_srl = G.nodes['tok'].data.pop('h_srl').view(1,-1,self.in_size)
-        gru_input = h_srl
+        gru_input = None
+        h_tok = self.node_trans(G.nodes['tok'].data['h'])
+        f_t = self.softmax(self.forget_gate(h_tok))
+        h_tok_gru = h_tok.view(1,-1,self.in_size)
+        if 'h_srl' in G.nodes['tok'].data:
+            h_srl = G.nodes['tok'].data.pop('h_srl').view(1,-1,self.in_size)
+            gru_input = h_srl
         if 'h_ent' in G.nodes['tok'].data:
             # there can be an instance without entities (not common anyway)
             h_ent = G.nodes['tok'].data.pop('h_ent').view(1,-1,self.in_size)
-            gru_input = torch.cat((h_ent, h_tok), dim=0)            
-        G.nodes['tok'].data['h'] = self.gru_node2tok(gru_input, h_srl)[0][-1]
+            gru_input = torch.cat((h_ent, h_tok_gru), dim=0) 
+        cand_htok = self.gru_node2tok(gru_input)[0][-1]
+        G.nodes['tok'].data['h'] = f_t * h_tok + (1 - f_t) * cand_htok
 
         out = None
         if self.residual:
@@ -955,7 +962,7 @@ optimizer = AdamW(model.parameters(),
 from transformers import get_linear_schedule_with_warmup, get_cosine_with_hard_restarts_schedule_with_warmup
 
 # Number of training epochs. The BERT authors recommend between 2 and 4. 
-epochs = 3
+epochs = 2
 
 # Total number of training steps is [number of batches] x [number of epochs]. 
 # (Note that this is not the same as the number of training samples).
@@ -1442,32 +1449,32 @@ class Validation():
 
 
 # %%
-model = HGNModel.from_pretrained('../../models/ans_type_pred')
-model.cuda()
+# model = HGNModel.from_pretrained('../../models/ans_type_pred')
+# model.cuda()
 
 # %%
-validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
-                                            dev_tensor_input_ids, dev_tensor_attention_masks, 
-                                            dev_tensor_token_type_ids,
-                                            dev_list_span_idx)
-preds = validation.get_answer_predictions(None)
+# validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
+#                                             dev_tensor_input_ids, dev_tensor_attention_masks, 
+#                                             dev_tensor_token_type_ids,
+#                                             dev_list_span_idx)
+# preds = validation.get_answer_predictions(None)
 
 # %%
-list(preds['answer'].items())[:50]
+# list(preds['answer'].items())[:50]
+
+# # %%
+# with open('../../preds_ans_type_pred.json', 'w+') as f:
+#     json.dump(preds, f)
+
+# # %%
+# validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
+#                         dev_tensor_input_ids, dev_tensor_attention_masks, 
+#                         dev_tensor_token_type_ids,
+#                         dev_list_span_idx)
+# metrics = validation.do_validation()
 
 # %%
-with open('../../preds_ans_type_pred.json', 'w+') as f:
-    json.dump(preds, f)
-
-# %%
-validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
-                        dev_tensor_input_ids, dev_tensor_attention_masks, 
-                        dev_tensor_token_type_ids,
-                        dev_list_span_idx)
-metrics = validation.do_validation()
-
-# %%
-metrics
+# metrics
 
 # %%
 # validation = Validation(model, hotpot_dev, dev_list_graphs[:10], tokenizer,
@@ -1508,13 +1515,13 @@ def record_eval_metric(neptune, metrics):
 
 
 # %%
-model_path = 'models/ans_type_pred_large'
+model_path = 'models/ans_type_pred_forget_htok'
 
 best_eval_em = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="LARGE answer type pred SAE", params=PARAMS, upload_source_files=['src/models/GAT_Hierar_Tok_Node_Aggr.py']):
-    neptune.set_property('server', 'nipa')
+with neptune.create_experiment(name="561 + forget htok", params=PARAMS, upload_source_files=['src/models/GAT_Hierar_Tok_Node_Aggr.py']):
+    neptune.set_property('server', 'irgpu11')
     neptune.set_property('training_set_path', training_path)
     neptune.set_property('dev_set_path', dev_path)
 
@@ -1586,22 +1593,22 @@ with neptune.create_experiment(name="LARGE answer type pred SAE", params=PARAMS,
                 scheduler.step()
                 model.zero_grad()
                 
-                if (step +1) % 10000 == 0:
-                    #############################
-                    ######### Validation ########
-                    #############################
-                    validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
-                                            dev_tensor_input_ids, dev_tensor_attention_masks, 
-                                            dev_tensor_token_type_ids,
-                                            dev_list_span_idx)
-                    metrics = validation.do_validation()
-                    model.train()
-                    record_eval_metric(neptune, metrics)
+                # if (step +1) % 10000 == 0:
+                #     #############################
+                #     ######### Validation ########
+                #     #############################
+                #     validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
+                #                             dev_tensor_input_ids, dev_tensor_attention_masks, 
+                #                             dev_tensor_token_type_ids,
+                #                             dev_list_span_idx)
+                #     metrics = validation.do_validation()
+                #     model.train()
+                #     record_eval_metric(neptune, metrics)
 
-                    curr_em = metrics['ans_em']
-                    if  curr_em > best_eval_em:
-                        best_eval_em = curr_em
-                        model.save_pretrained(model_path) 
+                #     curr_em = metrics['ans_em']
+                #     if  curr_em > best_eval_em:
+                #         best_eval_em = curr_em
+                #         model.save_pretrained(model_path) 
             total_train_loss += total_loss.detach().item()
 
             # free-up gpu memory
