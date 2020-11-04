@@ -60,13 +60,13 @@ def find_sublist_idx(x: list, y: list) -> int:
         # check if the full sublist is in the list
         if x[b:b+len(y)] == y:
             return b
-#         if len(occ)-1 ==  occ.index(b):
-#             # check all possible sublist candidates but not found the full sublist
-#             # return the first occurrence. Be careful, it can lead to wrong results
-#             # but in 99% of the cases should be fine.
-#             # If we reach this case, it is becase the SRL model skipped some token
-#             # i.e. B-arg0, I-arg0, O, I-arg0,...
-#             return occ[0]
+        if len(occ)-1 ==  occ.index(b):
+            # check all possible sublist candidates but not found the full sublist
+            # return the first occurrence. Be careful, it can lead to wrong results
+            # but in 99% of the cases should be fine.
+            # If we reach this case, it is becase the SRL model skipped some token
+            # i.e. B-arg0, I-arg0, O, I-arg0,...
+            return occ[0]
     raise Exception("Sublist not in list")
 x = [0,1,2,3,4,5,6,7]
 y = [3,4,5]
@@ -872,31 +872,25 @@ class Dataset():
         # query metadata
         graph_metadata['query'] = dict()
         graph_metadata['query']['st_end_idx'] =  np.array(list_query_st_end_idx)
-        # Answer Type metadata
-#         graph_metadata['AT'] = dict()
-#         graph_metadata['AT']['labels'] = np.array([at_label]).reshape(-1,1)
-#         graph_metadata['AT']['st_end_idx'] =  np.array([[0, self.max_len]])
-
-#         # doc metadata
-#         graph.nodes['doc'].data['st_end_idx'] =  np.array(list_doc_st_end_idx)
-#         graph.nodes['doc'].data['list_context_idx'] = np.array(list_doc_context_idx).reshape(-1,1)
-#         graph.nodes['doc'].data['labels'] = np.array(list_doc_lbl).reshape(-1,1)
-#         # sent metadata
-#         graph.nodes['sent'].data['st_end_idx'] =  np.array(list_sent_st_end_idx)
-#         graph.nodes['sent'].data['list_context_idx'] = np.array(list_sent_context_idx).reshape(-1,1)
-#         graph.nodes['sent'].data['labels'] = np.array(list_sent_lbl).reshape(-1,1)
-#         # srl metadata
-#         graph.nodes['srl'].data['st_end_idx'] =  np.array(list_srl_st_end_idx)
-#         graph.nodes['srl'].data['list_context_idx'] = np.array(list_srl_context_idx).reshape(-1,1)
-#         graph.nodes['srl'].data['labels'] = np.array(list_srl_lbl).reshape(-1,1)
-#         # ent metadata
-#         graph.nodes['ent'].data['st_end_idx'] =  np.array(list_ent_st_end_idx)
-#         graph.nodes['ent'].data['list_context_idx'] = np.array(list_ent_context_idx).reshape(-1,1)
-#         graph.nodes['ent'].data['labels'] = np.array(list_ent_lbl).reshape(-1,1)
-#         # token metadata
-#         graph.nodes['tok'].data['st_end_idx'] =  np.array(list_token_st_end_idx)
-#         graph.nodes['tok'].data['list_context_idx'] = np.array(list_token_context_idx).reshape(-1,1)
-#         graph.nodes['tok'].data['labels'] = np.array(list_token_lbl).reshape(-1,1)
+        graph.nodes['sent'].data['st_end_idx'] =  np.array(list_sent_st_end_idx)
+        graph.nodes['sent'].data['labels'] = np.array(list_sent_lbl).reshape(-1,1)
+        # srl metadata
+        graph.nodes['srl'].data['st_end_idx'] =  np.array(list_srl_st_end_idx)
+        graph.nodes['srl'].data['labels'] = np.array(list_srl_lbl).reshape(-1,1)
+        if len(list_srl_tmp2srl) > 0:
+#             print(current_srl_tmp_node)
+#             print(list_srl_tmp2srl)
+#             print(np.array(list_srl_tmp_st_end_idx).shape)
+#             print("###########")
+            graph.nodes['srl_tmp'].data['st_end_idx'] =  np.array(list_srl_tmp_st_end_idx)
+        if len(list_srl_loc2srl) > 0:
+            graph.nodes['srl_loc'].data['st_end_idx'] =  np.array(list_srl_loc_st_end_idx)
+        # ent metadata
+        graph.nodes['ent'].data['st_end_idx'] =  np.array(list_ent_st_end_idx)
+        graph.nodes['ent'].data['labels'] = np.array(list_ent_lbl).reshape(-1,1)
+        # token metadata
+        graph.nodes['tok'].data['st_end_idx'] =  np.array(list_token_st_end_idx)
+        graph.nodes['tok'].data['labels'] = np.array(list_token_lbl).reshape(-1,1)
         
         return graph, graph_metadata, list_srl_rel, list_ent2ent_metadata, (ans_st_idx, ans_end_idx)
 
@@ -1206,7 +1200,7 @@ with open(os.path.join(data_path, intermediate_train_data_path, "list_ent_query_
 print("Dev data loaded")
 
 # %%
-dev_dataset = Dataset(hotpot_dev, list_hotpot_dev_ner, dict_ins_doc_sent_srl_triples_dev,
+dev_dataset = Dataset(hotpot_dev[:205], list_hotpot_dev_ner, dict_ins_doc_sent_srl_triples_dev,
                       dict_ins_query_srl_triples_dev, list_ent_query_dev, batch_size=1)
 (list_graphs, 
  list_g_metadata,
