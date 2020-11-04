@@ -45,7 +45,7 @@ torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
 # %%
-data_path = "data/"
+data_path = "../../data/"
 hotpot_qa_path = os.path.join(data_path, "external")
 
 with open(os.path.join(hotpot_qa_path, "hotpot_train_v1.1.json"), "r") as f:
@@ -85,7 +85,7 @@ pretrained_weights = 'bert-base-cased'
 # ## Processing
 
 # %%
-training_path = os.path.join(data_path, "processed/training/heterog_20201004_query_edges/")
+training_path = os.path.join(data_path, "processed/training/heterog_20201103_wo_query_srl2srl/")
 dev_path = os.path.join(data_path, "processed/dev/heterog_20201004_query_edges/")
 
 with open(os.path.join(training_path, 'list_span_idx.p'), 'rb') as f:
@@ -213,6 +213,50 @@ class LabelSmoothingLoss(nn.Module):
             true_dist.scatter_(1, target.data.unsqueeze(1), self.confidence)
         return torch.mean(torch.sum(-true_dist * pred, dim=self.dim))
 
+# %%
+class BiAttention(nn.Module):
+    def __init__(self, input_dim, memory_dim, hid_dim, dropout):
+        super(BiAttention, self).__init__()
+        self.dropout = dropout
+        self.input_linear_1 = nn.Linear(input_dim, 1, bias=False)
+        self.memory_linear_1 = nn.Linear(memory_dim, 1, bias=False)
+
+        self.input_linear_2 = nn.Linear(input_dim, hid_dim, bias=True)
+        self.memory_linear_2 = nn.Linear(memory_dim, hid_dim, bias=True)
+
+        self.dot_scale = np.sqrt(input_dim)
+
+    def forward(self, input, memory, mask):
+        """
+        :param input: context_encoding N * Ld * d
+        :param memory: query_encoding N * Lm * d
+        :param mask: query_mask N * Lm
+        :return:
+        """
+        bsz, input_len, memory_len = input.size(0), input.size(1), memory.size(1)
+
+        input = F.dropout(input, self.dropout, training=self.training)  # N x Ld x d
+        memory = F.dropout(memory, self.dropout, training=self.training)  # N x Lm x d
+
+        input_dot = self.input_linear_1(input)  # N x Ld x 1
+        memory_dot = self.memory_linear_1(memory).view(bsz, 1, memory_len)  # N x 1 x Lm
+        # N * Ld * Lm
+        cross_dot = torch.bmm(input, memory.permute(0, 2, 1).contiguous()) / self.dot_scale
+        # [f1, f2]^T [w1, w2] + <f1 * w3, f2>
+        # (N * Ld * 1) + (N * 1 * Lm) + (N * Ld * Lm)
+        att = input_dot + memory_dot + cross_dot  # N x Ld x Lm
+        # N * Ld * Lm
+        att = att - 1e30 * (1 - mask[:, None])
+
+        input = self.input_linear_2(input)
+        memory = self.memory_linear_2(memory)
+
+        weight_one = F.softmax(att, dim=-1)
+        output_one = torch.bmm(weight_one, memory)
+        weight_two = F.softmax(att.max(dim=-1)[0], dim=-1).view(bsz, 1, input_len)
+        output_two = torch.bmm(weight_two, input)
+
+        return torch.cat([input, output_one, input*output_one, output_two*output_one], dim=-1), memory
 
 # %%
 #loss_fn = LabelSmoothingLoss()
@@ -327,7 +371,8 @@ class HeteroRGCNLayer(nn.Module):
                             dst],
                            dim=1)
         e = F.leaky_relu(self.node_att(cat_uv))
-        return {'m': m, 'e': e}
+        list_u, list_v, list_eid = edges.edges()
+        return {'m': m, 'e': e, 'origin': list_u}
 
     def reduce_func(self, nodes):
         '''
@@ -335,6 +380,9 @@ class HeteroRGCNLayer(nn.Module):
         
         '''       
         alpha = self.attn_drop(F.softmax(nodes.mailbox['e'], dim=1))
+        print("reducing", nodes.nodes())
+        print("origin", nodes.mailbox['origin'])
+        print(torch.mean(alpha, dim=-1))
         h = torch.sum(alpha * nodes.mailbox['m'], dim=1)
         return {'h': h}
     
@@ -367,7 +415,8 @@ class HeteroRGCNLayer(nn.Module):
                             updt_dst],
                            dim=1)
         e = F.leaky_relu(self.node_att(cat_uv))
-        return {'m': updt_src, 'e': e}
+        list_u, list_v, list_eid = edges.edges()
+        return {'m': updt_src, 'e': e, 'origin': list_u}
 
     def forward(self, G, feat_dict, bert_token_emb):
         # The input is a dictionary of node features for each type
@@ -388,8 +437,6 @@ class HeteroRGCNLayer(nn.Module):
                 pass
             elif "ent2ent_rel" == etype:
                 funcs[etype] = ((lambda e: self.message_func_rel(bert_token_emb, e)) , self.reduce_func)
-            elif "sent2at" == etype:
-                funcs[etype] = (self.message_func_AT_node, self.reduce_func)
             else:
                 funcs[etype] = (self.message_func_regular_node, self.reduce_func)
         G.multi_update_all(funcs, 'sum')
@@ -493,6 +540,16 @@ class GeLU(nn.Module):
         return 0.5 * x * (1 + torch.tanh(math.sqrt(2 / math.pi) * (x + 0.044715 * torch.pow(x, 3))))
 
 # %%
+def get_query_mapping(input_ids):
+    query_mapping = torch.zeros(512, bert_dim).cuda(device)
+    q_st = 1
+    q_end = (input_ids[0] == 102).nonzero()[0].item()
+    for i in range(q_st, q_end):
+        query_mapping[i] += 1
+    return query_mapping
+
+
+# %%
 bert_dim = 768 # default
 if 'large' in pretrained_weights:
     bert_dim = 1024
@@ -500,7 +557,8 @@ if 'albert-xxlarge-v2' == pretrained_weights:
     bert_dim = 4096
 dict_params = {'in_feats': bert_dim, 'out_feats': bert_dim, 'feat_drop': 0.2, 'attn_drop': 0.1, 'hidden_size_classifier': bert_dim,
                'weight_sent_loss': 1, 'weight_srl_loss': 1, 'weight_ent_loss': 1, 'bi_gru_layers': 1,
-               'weight_span_loss': 2, 'weight_ans_type_loss': 1, 'span_drop': 0.2,
+               'bi_gru_drop': 0.3,
+               'weight_span_loss': 2, 'weight_ans_type_loss': 1, 'span_drop': 0.2, 'bi_attn_drop':  0.3,
                'gat_layers': 2, 'etypes': graph.etypes, 'accumulation_steps': 1, 'residual': True,}
 class HGNModel(BertPreTrainedModel):
     def __init__(self, config):
@@ -510,8 +568,14 @@ class HGNModel(BertPreTrainedModel):
         else:
             self.bert = BertModel(config)
         # Initial Node Embedding
+        self.bi_attention = BiAttention(input_dim=dict_params['in_feats'],
+                                        memory_dim=dict_params['in_feats'],
+                                        hid_dim=dict_params['in_feats'],
+                                        dropout=dict_params['bi_attn_drop'])
+        self.bi_attn_linear = nn.Linear(dict_params['in_feats'] * 4, dict_params['in_feats'])
         self.bigru = nn.GRU(input_size=dict_params['in_feats'], hidden_size=dict_params['in_feats'], 
-                            num_layers=dict_params['bi_gru_layers'], dropout = dict_params['feat_drop'], bidirectional=True)
+                            num_layers=dict_params['bi_gru_layers'], dropout = dict_params['bi_gru_drop'], bidirectional=True)
+        
         self.gru_aggregation = nn.Linear(2*dict_params['in_feats'], dict_params['in_feats'])
         self.node_norm = NodeNorm()
         # Graph Neural Network
@@ -584,6 +648,13 @@ class HGNModel(BertPreTrainedModel):
         )
         sequence_output = outputs[0]
         assert not torch.isnan(sequence_output).any()
+        query_mapping = get_query_mapping(input_ids)
+        trunc_query_state = (sequence_output * query_mapping)
+        trunc_query_mapping = query_mapping[:, 0].unsqueeze(0)
+        attn_output, _ = self.bi_attention(sequence_output,
+                                                           trunc_query_state,
+                                                           trunc_query_mapping)
+        sequence_output = self.bi_attn_linear(attn_output)
         # Graph forward & node classification
         graph_out, graph_emb = self.graph_forward(graph, sequence_output, train)
         sequence_output = graph_emb['tok'].unsqueeze(0)
@@ -931,12 +1002,12 @@ def get_ans_type_lbl(ins):
 #                    start_positions=start_positions,
 #                    end_positions=end_positions,
 #                    ans_type_label=ans_type_lbl)
-# #     total_loss = output['loss']
-# #     total_loss.backward()
-# #     torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-# #     optimizer.step()
-# #     scheduler.step()
-# #     model.zero_grad()
+#     total_loss = output['loss']
+#     total_loss.backward()
+#     torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+#     optimizer.step()
+#     scheduler.step()
+#     model.zero_grad()
 
 # %%
 train_dataloader = list_graphs
@@ -1440,17 +1511,29 @@ class Validation():
         metrics['joint_prec'] += joint_prec
         metrics['joint_recall'] += joint_recall
 
+# %%
+torch.cuda.empty_cache()
+
+# %%
+model = HGNModel.from_pretrained('../../models/ans_type_pred')
+model.cuda()
+
+# %%
+validation = Validation(model, hotpot_dev, dev_list_graphs[:1], tokenizer,
+                                            dev_tensor_input_ids, dev_tensor_attention_masks, 
+                                            dev_tensor_token_type_ids,
+                                            dev_list_span_idx)
+preds = validation.get_answer_predictions(None)
+
+# %%
+dev_list_graphs[0]
+
+# %%
+# # %%
+
 
 # # %%
-# model = HGNModel.from_pretrained('../../models/ans_type_pred')
-# model.cuda()
 
-# # %%
-# validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
-#                                             dev_tensor_input_ids, dev_tensor_attention_masks, 
-#                                             dev_tensor_token_type_ids,
-#                                             dev_list_span_idx)
-# preds = validation.get_answer_predictions(None)
 
 # # %%
 # list(preds['answer'].items())[:50]
@@ -1470,11 +1553,11 @@ class Validation():
 # metrics
 
 # %%
-# validation = Validation(model, hotpot_dev, dev_list_graphs[:10], tokenizer,
-#                         dev_tensor_input_ids, dev_tensor_attention_masks, 
-#                         dev_tensor_token_type_ids,
-#                         dev_list_span_idx)
-# metrics = validation.do_validation()
+validation = Validation(model, hotpot_dev, dev_list_graphs[:10], tokenizer,
+                        dev_tensor_input_ids, dev_tensor_attention_masks, 
+                        dev_tensor_token_type_ids,
+                        dev_list_span_idx)
+metrics = validation.do_validation()
 
 # %%
 # validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
@@ -1508,13 +1591,13 @@ def record_eval_metric(neptune, metrics):
 
 
 # %%
-model_path = 'models/ans_type_pred_lwo_lbl_smoothing'
+model_path = 'models/ans_type_pred_hgn_encoder_wo_query_srl2srl'
 
 best_eval_em = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="561 w/o lbl smoothing", params=PARAMS, upload_source_files=['src/models/GAT_Hierar_Tok_Node_Aggr.py']):
-    neptune.set_property('server', 'nipa')
+with neptune.create_experiment(name="hgn encoder wo_query_srl2srl", params=PARAMS, upload_source_files=['src/models/GAT_Hierar_Tok_Node_Aggr.py']):
+    neptune.set_property('server', 'irgpu11')
     neptune.set_property('training_set_path', training_path)
     neptune.set_property('dev_set_path', dev_path)
 
@@ -1586,22 +1669,22 @@ with neptune.create_experiment(name="561 w/o lbl smoothing", params=PARAMS, uplo
                 scheduler.step()
                 model.zero_grad()
                 
-                # if (step +1) % 10000 == 0:
-                #     #############################
-                #     ######### Validation ########
-                #     #############################
-                #     validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
-                #                             dev_tensor_input_ids, dev_tensor_attention_masks, 
-                #                             dev_tensor_token_type_ids,
-                #                             dev_list_span_idx)
-                #     metrics = validation.do_validation()
-                #     model.train()
-                #     record_eval_metric(neptune, metrics)
+                if epoch_i == 0 and ((step +1) == 10000 or (step +1) == 20000):
+                    #############################
+                    ######### Validation ########
+                    #############################
+                    validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
+                                            dev_tensor_input_ids, dev_tensor_attention_masks, 
+                                            dev_tensor_token_type_ids,
+                                            dev_list_span_idx)
+                    metrics = validation.do_validation()
+                    model.train()
+                    record_eval_metric(neptune, metrics)
 
-                #     curr_em = metrics['ans_em']
-                #     if  curr_em > best_eval_em:
-                #         best_eval_em = curr_em
-                #         model.save_pretrained(model_path) 
+                    curr_em = metrics['ans_em']
+                    if  curr_em > best_eval_em:
+                        best_eval_em = curr_em
+                        model.save_pretrained(model_path) 
             total_train_loss += total_loss.detach().item()
 
             # free-up gpu memory
