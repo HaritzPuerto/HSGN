@@ -85,8 +85,8 @@ pretrained_weights = 'bert-base-cased'
 # ## Processing
 
 # %%
-training_path = os.path.join(data_path, "processed/training/heterog_20201004_query_edges/")
-dev_path = os.path.join(data_path, "processed/dev/heterog_20201004_query_edges/")
+training_path = os.path.join(data_path, "processed/training/heterog_20201103_q_srl_shared_pred/")
+dev_path = os.path.join(data_path, "processed/dev/heterog_20201103_q_srl_shared_pred/")
 
 with open(os.path.join(training_path, 'list_span_idx.p'), 'rb') as f:
     list_span_idx = pickle.load(f)
@@ -1508,13 +1508,13 @@ def record_eval_metric(neptune, metrics):
 
 
 # %%
-model_path = 'models/ans_type_pred_lwo_lbl_smoothing'
+model_path = 'models/q_srl_shared_pred'
 
 best_eval_em = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="561 w/o lbl smoothing", params=PARAMS, upload_source_files=['src/models/GAT_Hierar_Tok_Node_Aggr.py']):
-    neptune.set_property('server', 'nipa')
+with neptune.create_experiment(name="q_srl_shared_pred", params=PARAMS, upload_source_files=['src/models/GAT_Hierar_Tok_Node_Aggr.py']):
+    neptune.set_property('server', 'irgpu 2')
     neptune.set_property('training_set_path', training_path)
     neptune.set_property('dev_set_path', dev_path)
 
@@ -1586,22 +1586,22 @@ with neptune.create_experiment(name="561 w/o lbl smoothing", params=PARAMS, uplo
                 scheduler.step()
                 model.zero_grad()
                 
-                # if (step +1) % 10000 == 0:
-                #     #############################
-                #     ######### Validation ########
-                #     #############################
-                #     validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
-                #                             dev_tensor_input_ids, dev_tensor_attention_masks, 
-                #                             dev_tensor_token_type_ids,
-                #                             dev_list_span_idx)
-                #     metrics = validation.do_validation()
-                #     model.train()
-                #     record_eval_metric(neptune, metrics)
+                if epoch_i == 0 and ((step +1) == 10000 or (step +1) == 10000):
+                    #############################
+                    ######### Validation ########
+                    #############################
+                    validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
+                                            dev_tensor_input_ids, dev_tensor_attention_masks, 
+                                            dev_tensor_token_type_ids,
+                                            dev_list_span_idx)
+                    metrics = validation.do_validation()
+                    model.train()
+                    record_eval_metric(neptune, metrics)
 
-                #     curr_em = metrics['ans_em']
-                #     if  curr_em > best_eval_em:
-                #         best_eval_em = curr_em
-                #         model.save_pretrained(model_path) 
+                    curr_em = metrics['ans_em']
+                    if  curr_em > best_eval_em:
+                        best_eval_em = curr_em
+                        model.save_pretrained(model_path) 
             total_train_loss += total_loss.detach().item()
 
             # free-up gpu memory

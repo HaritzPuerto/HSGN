@@ -26,7 +26,7 @@ torch.cuda.manual_seed_all(random_seed)
 device = 'cuda'
 pretrained_weights = 'bert-base-cased'
 #pretrained_weights = 'albert-xxlarge-v2'
-data_path = '../../data/'
+data_path = 'data/'
 hotpotqa_path = 'external/'
 intermediate_train_data_path = 'interim/training/'
 intermediate_dev_data_path = 'interim/dev/'
@@ -338,7 +338,7 @@ class Dataset():
         list_token_lbl = []
         # metadata of query
         list_query_st_end_idx = []
-        
+        list_query2srl_shared_pred = []
         list_ent_node2str = []
         dict_ent_str2ent_node = dict()
         token_node_idx = 0
@@ -357,6 +357,7 @@ class Dataset():
         ans_end_idx = -1
         list_doc_nodes = []
         dict_srl_metadata = dict() # needed to create srl common entity edges
+        list_query_preds = self.get_query_predicates(ins_idx)
         # for each doc
         dict_sent_node2metadata = dict()
         doc_node_idx = 0
@@ -584,6 +585,9 @@ class Dataset():
                     list_srl2sent.extend([(arg, current_sent_node) for arg in list_arg_nodes])        
                     # sent -> arg_srl  # lbl: [SENT2SRL]
                     list_sent2srl.extend([(current_sent_node, arg) for arg in list_arg_nodes])
+                    # query -> srl # lbl:[QUERY2SRL_shared_pred]
+                    if verb in list_query_preds:
+                        list_query2srl_shared_pred.extend([(0, current_sent_node) for arg in list_arg_nodes])  
                 # sent -> doc  # lbl: [SENT2DOC]
                 list_sent2doc.append((current_sent_node, current_doc_node))
                 # doc -> sent  # lbl: [DOC2SENT]
@@ -830,7 +834,9 @@ class Dataset():
         if list_q_srl2srl != []:
             dict_edges[('srl', 'query_srl2srl', 'srl')] = list_q_srl2srl
         if list_query2sent_pred != []:
-            dict_edges['query', 'query2srl_pred', 'sent'] = list_query2sent_pred
+            dict_edges['query', 'query2sent_pred', 'sent'] = list_query2sent_pred
+        if list_query2srl_shared_pred != []:
+            dict_edges['query', 'query2srl_pred', 'srl'] = list_query2srl_shared_pred
         graph = dgl.heterograph(dict_edges)
         graph_metadata = dict()
         # doc metadata
@@ -899,6 +905,13 @@ class Dataset():
 #         graph.nodes['tok'].data['labels'] = np.array(list_token_lbl).reshape(-1,1)
         
         return graph, graph_metadata, list_srl_rel, list_ent2ent_metadata, (ans_st_idx, ans_end_idx)
+
+    def get_query_predicates(self, ins_idx):
+        list_preds = []
+        for key, triple_dict in self.dict_ins_query_triples[str(ins_idx)].items():
+            if 'V' in triple_dict:
+                list_preds.append(triple_dict['V'])
+        return list_preds
 
     def compute_ent_relations(self, list_srl2srl, list_srl2ent, list_srl_rel_metadata):
         # aux data structure
@@ -1115,7 +1128,7 @@ def add_metadata2graph(graph, metadata):
     return graph
 
 # %%
-train_dataset = Dataset(hotpot_train[0:10], list_hotpot_train_ner, dict_ins_doc_sent_srl_triples,
+train_dataset = Dataset(hotpot_train, list_hotpot_train_ner, dict_ins_doc_sent_srl_triples,
                         dict_ins_query_srl_triples_training, list_ent_query_training, batch_size=1)
 (list_graphs, 
  list_g_metadata,
@@ -1156,7 +1169,7 @@ for g_idx, list_dict_edge in enumerate(list_list_ent2ent_metadata):
         list_graphs[g_idx].edges['ent2ent_rel'].data['rel_type'] = torch.tensor([edge['rel_type'] for edge in list_dict_edge])
         list_graphs[g_idx].edges['ent2ent_rel'].data['span_idx'] = torch.tensor([edge['span_idx'] for edge in list_dict_edge])
 # %%
-training_path = os.path.join(data_path, 'processed/training/heterog_20201007_query_edges_albert-xxlarge-v2')
+training_path = os.path.join(data_path, 'processed/training/heterog_20201103_q_srl_shared_pred')
 training_graph_path = os.path.join(training_path, 'graphs')
 training_metadata_path = os.path.join(training_path, 'metadata')
 
@@ -1193,63 +1206,63 @@ with open(os.path.join(training_path, 'list_span_idx.p'), 'wb') as f:
 
 # %%
 # dev data
-with open(os.path.join(data_path, hotpotqa_path, "hotpot_dev_distractor_v1.json"), "r") as f:
-    hotpot_dev = json.load(f)
-with open(os.path.join(data_path, intermediate_dev_data_path, "list_hotpot_ner_no_coref_dev.p"), "rb") as f:
-    list_hotpot_dev_ner = pickle.load(f)
-with open(os.path.join(data_path, intermediate_dev_data_path, "dict_ins_doc_sent_srl_triples_dev.json"), 'r') as f:
-    dict_ins_doc_sent_srl_triples_dev = json.load(f)
-with open(os.path.join(data_path, intermediate_dev_data_path, "dict_ins_query_srl_triples.json"), "r") as f:
-    dict_ins_query_srl_triples_dev = json.load(f)
-with open(os.path.join(data_path, intermediate_train_data_path, "list_ent_query_dev.p"), "rb") as f:
-    list_ent_query_dev = pickle.load(f)
-print("Dev data loaded")
+# with open(os.path.join(data_path, hotpotqa_path, "hotpot_dev_distractor_v1.json"), "r") as f:
+#     hotpot_dev = json.load(f)
+# with open(os.path.join(data_path, intermediate_dev_data_path, "list_hotpot_ner_no_coref_dev.p"), "rb") as f:
+#     list_hotpot_dev_ner = pickle.load(f)
+# with open(os.path.join(data_path, intermediate_dev_data_path, "dict_ins_doc_sent_srl_triples_dev.json"), 'r') as f:
+#     dict_ins_doc_sent_srl_triples_dev = json.load(f)
+# with open(os.path.join(data_path, intermediate_dev_data_path, "dict_ins_query_srl_triples.json"), "r") as f:
+#     dict_ins_query_srl_triples_dev = json.load(f)
+# with open(os.path.join(data_path, intermediate_train_data_path, "list_ent_query_dev.p"), "rb") as f:
+#     list_ent_query_dev = pickle.load(f)
+# print("Dev data loaded")
 
-# %%
-dev_dataset = Dataset(hotpot_dev, list_hotpot_dev_ner, dict_ins_doc_sent_srl_triples_dev,
-                      dict_ins_query_srl_triples_dev, list_ent_query_dev, batch_size=1)
-(list_graphs, 
- list_g_metadata,
- list_context,
- list_list_srl_edges_metadata,
- list_list_ent2ent_metadata,
- list_span_idx) = dev_dataset.create_dataloader()
+# # %%
+# dev_dataset = Dataset(hotpot_dev, list_hotpot_dev_ner, dict_ins_doc_sent_srl_triples_dev,
+#                       dict_ins_query_srl_triples_dev, list_ent_query_dev, batch_size=1)
+# (list_graphs, 
+#  list_g_metadata,
+#  list_context,
+#  list_list_srl_edges_metadata,
+#  list_list_ent2ent_metadata,
+#  list_span_idx) = dev_dataset.create_dataloader()
 
-# %%
-for g_idx, list_dict_edge in enumerate(list_list_srl_edges_metadata):
-    list_graphs[g_idx].edges['srl2srl'].data['rel_type'] = torch.tensor([edge['rel_type'] for edge in list_dict_edge])
-    list_graphs[g_idx].edges['srl2srl'].data['span_idx'] = torch.tensor([edge['span_idx'] for edge in list_dict_edge])
+# # %%
+# for g_idx, list_dict_edge in enumerate(list_list_srl_edges_metadata):
+#     list_graphs[g_idx].edges['srl2srl'].data['rel_type'] = torch.tensor([edge['rel_type'] for edge in list_dict_edge])
+#     list_graphs[g_idx].edges['srl2srl'].data['span_idx'] = torch.tensor([edge['span_idx'] for edge in list_dict_edge])
 
-for g_idx, list_dict_edge in enumerate(list_list_ent2ent_metadata):
-    list_etypes = [etype for (src, etype, dst) in list_graphs[g_idx].canonical_etypes]
-    if 'ent2ent_rel' in list_etypes:
-        list_graphs[g_idx].edges['ent2ent_rel'].data['rel_type'] = torch.tensor([edge['rel_type'] for edge in list_dict_edge])
-        list_graphs[g_idx].edges['ent2ent_rel'].data['span_idx'] = torch.tensor([edge['span_idx'] for edge in list_dict_edge])
+# for g_idx, list_dict_edge in enumerate(list_list_ent2ent_metadata):
+#     list_etypes = [etype for (src, etype, dst) in list_graphs[g_idx].canonical_etypes]
+#     if 'ent2ent_rel' in list_etypes:
+#         list_graphs[g_idx].edges['ent2ent_rel'].data['rel_type'] = torch.tensor([edge['rel_type'] for edge in list_dict_edge])
+#         list_graphs[g_idx].edges['ent2ent_rel'].data['span_idx'] = torch.tensor([edge['span_idx'] for edge in list_dict_edge])
 
-# %%
-list_input_ids = [context['input_ids'] for context in list_context]
-list_token_type_ids = [context['token_type_ids'] for context in list_context]
-list_attention_masks = [context['attention_mask'] for context in list_context]
-tensor_input_ids = torch.tensor(list_input_ids)
-tensor_token_type_ids = torch.tensor(list_token_type_ids)
-tensor_attention_masks = torch.tensor(list_attention_masks)
+# # %%
+# list_input_ids = [context['input_ids'] for context in list_context]
+# list_token_type_ids = [context['token_type_ids'] for context in list_context]
+# list_attention_masks = [context['attention_mask'] for context in list_context]
+# tensor_input_ids = torch.tensor(list_input_ids)
+# tensor_token_type_ids = torch.tensor(list_token_type_ids)
+# tensor_attention_masks = torch.tensor(list_attention_masks)
 
-# %%
-dev_path = os.path.join(data_path, 'processed/dev/heterog_query_edges_sae_doc_filter_20201023')
-dev_graph_path = os.path.join(dev_path, 'graphs')
-dev_metadata_path = os.path.join(dev_path, 'metadata')
+# # %%
+# dev_path = os.path.join(data_path, 'processed/dev/heterog_20201103_q_srl_shared_pred')
+# dev_graph_path = os.path.join(dev_path, 'graphs')
+# dev_metadata_path = os.path.join(dev_path, 'metadata')
 
-# %%
-for i, g in enumerate(list_graphs):
-    with open(os.path.join(dev_graph_path, "graph" + str(i) + ".bin"), "wb" ) as f:
-        pickle.dump(g, f)
-    with open( os.path.join(dev_metadata_path, "metadata" + str(i) + ".bin"), "wb" ) as f:
-        pickle.dump(list_g_metadata[i], f)
-    # separate the metadata from the graph to store it (do not add metadata in the first place)
+# # %%
+# for i, g in enumerate(list_graphs):
+#     with open(os.path.join(dev_graph_path, "graph" + str(i) + ".bin"), "wb" ) as f:
+#         pickle.dump(g, f)
+#     with open( os.path.join(dev_metadata_path, "metadata" + str(i) + ".bin"), "wb" ) as f:
+#         pickle.dump(list_g_metadata[i], f)
+#     # separate the metadata from the graph to store it (do not add metadata in the first place)
 
-# %%
-torch.save(tensor_input_ids, os.path.join(dev_path, 'tensor_input_ids.p'))
-torch.save(tensor_token_type_ids, os.path.join(dev_path, 'tensor_token_type_ids.p'))
-torch.save(tensor_attention_masks, os.path.join(dev_path, 'tensor_attention_masks.p'))
-with open(os.path.join(dev_path, 'list_span_idx.p'), 'wb') as f:
-    pickle.dump(list_span_idx, f)
+# # %%
+# torch.save(tensor_input_ids, os.path.join(dev_path, 'tensor_input_ids.p'))
+# torch.save(tensor_token_type_ids, os.path.join(dev_path, 'tensor_token_type_ids.p'))
+# torch.save(tensor_attention_masks, os.path.join(dev_path, 'tensor_attention_masks.p'))
+# with open(os.path.join(dev_path, 'list_span_idx.p'), 'wb') as f:
+#     pickle.dump(list_span_idx, f)
