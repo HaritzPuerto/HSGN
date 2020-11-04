@@ -73,8 +73,9 @@ class LabelSmoothingLoss(nn.Module):
 
 
 # %%
-loss_fn = LabelSmoothingLoss()
-
+#loss_fn = LabelSmoothingLoss()
+loss_fn = nn.CrossEntropyLoss()
+# %%
 class NodeNorm(nn.Module):
     def __init__(self, unbiased=False, eps=1e-5):
         super(NodeNorm, self).__init__()
@@ -350,6 +351,36 @@ class GeLU(nn.Module):
         return 0.5 * x * (1 + torch.tanh(math.sqrt(2 / math.pi) * (x + 0.044715 * torch.pow(x, 3))))
 
 # %%
+class BertLayerNorm(nn.Module):
+    def __init__(self, hidden_size, eps=1e-12):
+        """Construct a layernorm module in the TF style (epsilon inside the square root).
+        """
+        super(BertLayerNorm, self).__init__()
+        self.weight = nn.Parameter(torch.ones(hidden_size))
+        self.bias = nn.Parameter(torch.zeros(hidden_size))
+        self.variance_epsilon = eps
+
+    def forward(self, x):
+        u = x.mean(-1, keepdim=True)
+        s = (x - u).pow(2).mean(-1, keepdim=True)
+        x = (x - u) / torch.sqrt(s + self.variance_epsilon)
+        return self.weight * x + self.bias
+
+class OutputLayer(nn.Module):
+    def __init__(self, hidden_dim, dropout, num_answer=1):
+        super(OutputLayer, self).__init__()
+
+        self.output = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim*2),
+            nn.ReLU(),
+            BertLayerNorm(hidden_dim*2, eps=1e-12),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim*2, num_answer),
+        )
+
+    def forward(self, hidden_states):
+        return self.output(hidden_states)
+# %%
 bert_dim = 768 # default
 if 'large' in pretrained_weights:
     bert_dim = 1024
@@ -380,25 +411,39 @@ class HGNModel(BertPreTrainedModel):
         self.ent_classifier = nn.Sequential(nn.Linear(2*dict_params['out_feats'],
                                                       dict_params['hidden_size_classifier']),
                                             nn.ReLU(),
+                                            nn.LayerNorm(dict_params['hidden_size_classifier']),
                                             nn.Linear(dict_params['hidden_size_classifier'],
                                                       2))
         ### srl node
         self.srl_classifier = nn.Sequential(nn.Linear(2*dict_params['out_feats'],
                                                       dict_params['hidden_size_classifier']),
                                             nn.ReLU(),
+                                            nn.LayerNorm(dict_params['hidden_size_classifier']),
                                             nn.Linear(dict_params['hidden_size_classifier'],
                                                       2))
         ### sent node
         self.sent_classifier = nn.Sequential(nn.Linear(2*dict_params['out_feats'],
                                                        dict_params['hidden_size_classifier']),
                                             nn.ReLU(),
+                                            nn.LayerNorm(dict_params['hidden_size_classifier']),
                                             nn.Linear(dict_params['hidden_size_classifier'],
                                                       2))
         
         # span prediction
         self.num_labels = config.num_labels
-        self.qa_outputs = nn.Sequential(nn.Linear(config.hidden_size, config.hidden_size), GeLU(), nn.Dropout(dict_params['span_drop']),
-                                        nn.Linear(config.hidden_size, 2))
+        # self.qa_outputs = nn.Sequential(nn.Linear(config.hidden_size, config.hidden_size),
+        #                                 GeLU(),
+        #                                 nn.Dropout(dict_params['span_drop']),
+        #                                 nn.Linear(config.hidden_size, 2))
+        self.start_linear = OutputLayer(config.hidden_size, dict_params['span_drop'], num_answer=1)
+        self.end_linear = OutputLayer(config.hidden_size, dict_params['span_drop'], num_answer=1)
+        # Answer Type
+        self.sfm = nn.Softmax(-1)
+        # self.answer_type_classifier = nn.Sequential(nn.Linear(config.hidden_size, config.hidden_size), 
+        #                                             GeLU(),
+        #                                             nn.Dropout(dict_params['span_drop']),
+        #                                             nn.Linear(config.hidden_size, 3)) 
+        self.answer_type_classifier = OutputLayer(config.hidden_size, dict_params['span_drop'], num_answer=3)
         # init weights
         self.init_weights()
         # params
@@ -419,7 +464,8 @@ class HGNModel(BertPreTrainedModel):
         inputs_embeds=None,
         start_positions=None,
         end_positions=None,
-        train=True
+        train=True,
+        ans_type_label=None
     ):
         outputs = self.bert(
             input_ids,
@@ -434,37 +480,45 @@ class HGNModel(BertPreTrainedModel):
         # Graph forward & node classification
         graph_out, graph_emb = self.graph_forward(graph, sequence_output, train)
         sequence_output = graph_emb['tok'].unsqueeze(0)
-        # span prediction
+         # answer type logits
+        ans_type_logits = self.answer_type_classifier(self.attention(graph_out['sent']['emb'].view(1,-1,dict_params['out_feats']),
+                                                                     graph_out['sent']['logits'][:,1].view(1,-1,1))
+                                                      ).squeeze(1)
+        
         span_loss = None
         start_logits = None
         end_logits = None
-        span_loss, start_logits, end_logits = self.span_prediction(sequence_output, start_positions, end_positions)
-        assert not torch.isnan(start_logits).any()
-        assert not torch.isnan(end_logits).any()  
-        # loss
-        final_loss = 0.0
-        if span_loss is not None:
-            final_loss += self.weight_span_loss*span_loss
-        if graph_out['sent']['loss'] is not None:
-            final_loss += self.weight_sent_loss*graph_out['sent']['loss']
-        if graph_out['srl']['loss'] is not None:
-            final_loss += self.weight_srl_loss*graph_out['srl']['loss']
-        if graph_out['ent']['loss'] is not None:
-            final_loss += self.weight_ent_loss*graph_out['ent']['loss']
-     
-        return {'loss': final_loss, 
+        if (train and ans_type_label == 0) or (not train):
+            # span prediction    
+            span_loss, start_logits, end_logits = self.span_prediction(sequence_output, start_positions, end_positions)
+            assert not torch.isnan(start_logits).any()
+            assert not torch.isnan(end_logits).any()
+        
+        
+       
+        return {'loss': 0, 
                 'sent': graph_out['sent'], 
                 'ent': graph_out['ent'],
                 'srl': graph_out['srl'],
-                'span': {'loss': span_loss, 'start_logits': start_logits, 'end_logits': end_logits}}  
+                'ans_type': {'loss': 0, 'logits': ans_type_logits},
+                'span': {'loss': 0, 'start_logits': start_logits, 'end_logits': end_logits}}  
     
+    def attention(self, x, z):
+        # x: batch_size X max_nodes X feat_dim
+        # z: attention logits
+        att = nn.functional.softmax(z, dim=1) # batch_size X max_nodes X 1
+        output = torch.bmm(att.transpose(1,2), x)
+        return output
+
     def graph_forward(self, graph, bert_context_emb, train):
         # create graph initial embedding #
         graph_emb = self.graph_initial_embedding(graph, bert_context_emb)
         for (k,v) in graph_emb.items():
             assert not torch.isnan(v).any()
         # graph_emb shape [num_nodes, in_feats]    
-        
+        sample_sent_nodes = self.sample_sent_nodes(graph)
+        sample_srl_nodes = self.sample_srl_nodes(graph)
+        sample_ent_nodes = self.sample_ent_nodes(graph)
         initial_graph_emb = graph_emb # for skip-connection
         
         # update graph embedding #
@@ -477,10 +531,9 @@ class HGNModel(BertPreTrainedModel):
         # classify nodes #
         sent_labels = None
         ent_labels = None
+        sent_emb = None
         if train:
-            sample_sent_nodes = self.sample_sent_nodes(graph)
-            sample_srl_nodes = self.sample_srl_nodes(graph)
-            sample_ent_nodes = self.sample_ent_nodes(graph)
+            sent_emb = graph_emb['sent'][sample_sent_nodes]
             # add skip-connection
             logits_sent = self.sent_classifier(torch.cat((graph_emb['sent'][sample_sent_nodes],
                                                           initial_graph_emb['sent'][sample_sent_nodes]), dim=1))
@@ -514,6 +567,7 @@ class HGNModel(BertPreTrainedModel):
             
             
         else:
+            sent_emb = graph_emb['sent']
             # add skip-connection
             logits_sent = self.sent_classifier(torch.cat((graph_emb['sent'],
                                                           initial_graph_emb['sent']), dim=1))
@@ -573,7 +627,8 @@ class HGNModel(BertPreTrainedModel):
         if ent_labels is not None:
             ent_labels = ent_labels.cpu().view(-1)
 
-        return ({'sent': {'loss': loss_sent, 'probs': probs_sent, 'lbl': sent_labels},
+        return ({'sent': {'loss': loss_sent, 'probs': probs_sent, 'logits': logits_sent, 
+                          'emb': sent_emb, 'lbl': sent_labels},
                 'srl': {'loss': loss_srl, 'probs': probs_srl, 'lbl': srl_labels},
                 'ent': {'loss': loss_ent, 'probs': probs_ent, 'lbl': ent_labels},
                 },
@@ -689,11 +744,24 @@ class HGNModel(BertPreTrainedModel):
         g2d_graph_emb = self.graph2token_attention(g2d_graph, g2d_graph_emb)
         return g2d_graph_emb[0:offset_node].unsqueeze(0)
     
+    # def span_prediction(self, sequence_output, start_positions, end_positions):
+    #     logits = self.qa_outputs(sequence_output)
+    #     start_logits, end_logits = logits.split(1, dim=-1)
+    #     start_logits = start_logits.squeeze(-1)
+    #     end_logits = end_logits.squeeze(-1)
+
+    #     total_loss = None
+    #     if ((start_positions is not None and end_positions is not None) and
+    #         (start_positions != -1 and end_positions != -1)):
+    #         loss_fct = nn.CrossEntropyLoss()
+    #         start_loss = loss_fct(start_logits, start_positions)
+    #         end_loss = loss_fct(end_logits, end_positions)
+    #         total_loss = (start_loss + end_loss) / 2
+    #     return (total_loss,  start_logits, end_logits)
+
     def span_prediction(self, sequence_output, start_positions, end_positions):
-        logits = self.qa_outputs(sequence_output)
-        start_logits, end_logits = logits.split(1, dim=-1)
-        start_logits = start_logits.squeeze(-1)
-        end_logits = end_logits.squeeze(-1)
+        start_logits = self.start_linear(sequence_output).squeeze(-1)
+        end_logits = self.end_linear(sequence_output).squeeze(-1)
 
         total_loss = None
         if ((start_positions is not None and end_positions is not None) and
