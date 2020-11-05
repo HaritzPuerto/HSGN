@@ -45,7 +45,7 @@ torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
 # %%
-data_path = "data/"
+data_path = "../../data/"
 hotpot_qa_path = os.path.join(data_path, "external")
 
 with open(os.path.join(hotpot_qa_path, "hotpot_train_v1.1.json"), "r") as f:
@@ -955,7 +955,7 @@ optimizer = AdamW(model.parameters(),
 from transformers import get_linear_schedule_with_warmup, get_cosine_with_hard_restarts_schedule_with_warmup
 
 # Number of training epochs. The BERT authors recommend between 2 and 4. 
-epochs = 2
+epochs = 3
 
 # Total number of training steps is [number of batches] x [number of epochs]. 
 # (Note that this is not the same as the number of training samples).
@@ -1194,6 +1194,8 @@ class Validation():
                    }
         # Evaluate data for one epoch       
         num_valid_examples = 0
+        output_pred_sp = {}
+        output_predictions_ans = {}
         for step, b_graph in enumerate(tqdm(self.validation_dataloader)):
             num_valid_examples += 1
             ans_type_lbl = get_ans_type_lbl(self.dataset[step])
@@ -1206,13 +1208,28 @@ class Validation():
                                end_positions=torch.tensor([self.list_span_idx[step][1]], device='cuda'), 
                                ans_type_label=ans_type_lbl,
                                     train=False)
-                
+            _id = self.dataset[step]['_id']   
             # Accumulate the validation loss.
             metrics['validation_loss'] += output['loss'].item()
             # Sentence evaluation
             sent_labels = output['sent']['lbl']
             prediction_sent = torch.argmax(output['sent']['probs'], dim=1)
             sp_em, sp_prec, sp_recall = self.update_sp_metrics(metrics, prediction_sent, sent_labels)
+            sent_num = 0
+            ## get sent titles and sents idx
+            dict_ins2dict_doc2pred = self.get_oracle_dict_ins2dict_doc2pred()
+            dict_sent_num2str = dict()
+            for doc_idx, (doc_title, doc) in enumerate(self.dataset[step]['context']):
+                if dict_ins2dict_doc2pred[step][doc_idx] == 1:
+                    for i, sent in enumerate(doc):
+                        dict_sent_num2str[sent_num] = {'sent': i, 'doc_title': doc_title}
+                        sent_num += 1
+            output_pred_sp[_id] = []
+            for i, pred in enumerate(prediction_sent):
+                if pred == 1:
+                    output_pred_sp[_id].append([dict_sent_num2str[i]['doc_title'],
+                                                dict_sent_num2str[i]['sent']])
+            
             # srl
             prediction_srl = torch.argmax(output['srl']['probs'], dim=1)
             srl_labels = output['srl']['lbl']
@@ -1240,12 +1257,13 @@ class Validation():
             ans_em, ans_prec, ans_recall = self.update_answer_metrics(metrics, predicted_ans, golden_ans)
             # joint
             self.update_joint_metrics(metrics, ans_em, ans_prec, ans_recall, sp_em, sp_prec, sp_recall)                
-            
+            output_predictions_ans[_id] = predicted_ans
         #N = len(self.validation_dataloader)
         N = num_valid_examples
         for k in metrics.keys():
             metrics[k] /= N
-        return metrics
+        pred_json = {'answer': output_predictions_ans, 'sp': output_pred_sp}
+        return metrics, pred_json
     
     def get_answer_predictions(self, dict_ins2dict_doc2pred):
         output_pred_sp = {}
@@ -1301,6 +1319,19 @@ class Validation():
 #                                                 dict_sent_num2str[i]['sent']])
         return {'answer': output_predictions_ans, 'sp': output_pred_sp,
                 'ent': output_ent, 'srl': output_srl}
+    
+    def get_oracle_dict_ins2dict_doc2pred(self):
+        dict_ins2dict_doc2pred = dict()
+        for ins_idx, ins in enumerate(hotpot_dev):
+            set_golden_docs = set([title for title, _ in ins['supporting_facts']])
+            dict_doc2pred = dict()
+            for doc_idx, (title, doc) in enumerate(ins['context']):
+                if title in set_golden_docs:
+                    dict_doc2pred[doc_idx] = 1
+                else:
+                    dict_doc2pred[doc_idx] = 0
+            dict_ins2dict_doc2pred[ins_idx] = dict_doc2pred
+        return dict_ins2dict_doc2pred
     
     def __get_pred_ans_str(self, input_ids, output, max_ans_len):
         st, end = self.__get_st_end_span_idx(output['span']['start_logits'].squeeze(),
@@ -1440,24 +1471,48 @@ class Validation():
         metrics['joint_prec'] += joint_prec
         metrics['joint_recall'] += joint_recall
 
+# %%
+dict_ins2dict_doc2pred = dict()
+for ins_idx, ins in enumerate(hotpot_dev):
+    set_golden_docs = set([title for title, _ in ins['supporting_facts']])
+    dict_doc2pred = dict()
+    for doc_idx, (title, doc) in enumerate(ins['context']):
+        if title in set_golden_docs:
+            dict_doc2pred[doc_idx] = 1
+        else:
+            dict_doc2pred[doc_idx] = 0
+    dict_ins2dict_doc2pred[ins_idx] = dict_doc2pred
 
-# # %%
-# model = HGNModel.from_pretrained('../../models/ans_type_pred')
+# %%
+# model = HGNModel.from_pretrained('../../models/ans_type_pred_3_epochs')
 # model.cuda()
 
+# %%
+validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
+                        dev_tensor_input_ids, dev_tensor_attention_masks, 
+                        dev_tensor_token_type_ids,
+                        dev_list_span_idx)
+metrics, pred_json_oracle = validation.do_validation()
+
+# %%
+metrics
+
+# %%
+with open('../../preds_ans_type_pred_3_epochs_oracle.json', 'w+') as f:
+    json.dump(pred_json_oracle, f)
+
+# %%
 # # %%
-# validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
-#                                             dev_tensor_input_ids, dev_tensor_attention_masks, 
-#                                             dev_tensor_token_type_ids,
-#                                             dev_list_span_idx)
-# preds = validation.get_answer_predictions(None)
+
+
+# # %%
+
 
 # # %%
 # list(preds['answer'].items())[:50]
 
 # # %%
-# with open('../../preds_ans_type_pred.json', 'w+') as f:
-#     json.dump(preds, f)
+
 
 # # %%
 # validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
@@ -1508,12 +1563,12 @@ def record_eval_metric(neptune, metrics):
 
 
 # %%
-model_path = 'models/ans_type_pred_lwo_lbl_smoothing'
+model_path = 'models/ans_type_pred_3_epochs'
 
 best_eval_em = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="561 w/o lbl smoothing", params=PARAMS, upload_source_files=['src/models/GAT_Hierar_Tok_Node_Aggr.py']):
+with neptune.create_experiment(name="561 3 epochs", params=PARAMS, upload_source_files=['src/models/GAT_Hierar_Tok_Node_Aggr.py']):
     neptune.set_property('server', 'nipa')
     neptune.set_property('training_set_path', training_path)
     neptune.set_property('dev_set_path', dev_path)
