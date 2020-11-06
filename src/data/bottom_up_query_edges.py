@@ -280,6 +280,8 @@ class Dataset():
         list_ent2srl = []
         list_srl2query = []
         list_query2srl = []
+        list_query2ent = []
+        list_query2sent = []
         ### to tokens
         list_doc2tok = []
         list_tok2doc = []
@@ -597,9 +599,10 @@ class Dataset():
 #         # fully connected doc nodes    
 #         list_doc2doc.extend([(u, v) for u in list_doc_nodes for v in list_doc_nodes if u != v])
 #         list_doc2doc.extend([(v, u) for u in list_doc_nodes for v in list_doc_nodes if u != v])
-        
-        list_query2sent = [(0, s) for s in range(sent_node_idx)]
-        list_query2ent = [(0, e) for e in range(ent_node_idx)] 
+        if sent_node_idx > 0:
+            list_query2sent = [(0, s) for s in range(sent_node_idx)] # lbl: [QUERY2SENT]
+        if ent_node_idx > 0:
+            list_query2ent = [(0, e) for e in range(ent_node_idx)]  # lbl: [QUERY2ENT]
         ############ Query node ################
         (q_st, q_end) = dict_idx['q_token_st_end_idx']
         list_query_st_end_idx = [(q_st, q_end)]
@@ -794,9 +797,7 @@ class Dataset():
                                                                              list_srl2ent, 
                                                                              list_srl_rel)
         
-        dict_edges = {('query', 'query2sent', 'sent'): list_query2sent,
-                      ('query', 'query2srl', 'srl'): list_query2srl,
-                      ('query', 'query2ent', 'ent'): list_query2ent,
+        dict_edges = {
                      #('sent', 'sent2doc', 'doc'): list_sent2doc,  # lbl: [SENT2DOC]
                      ('srl', 'srl2sent', 'sent'): list_srl2sent,  # lbl: [SRL2SENT]
                      # to token
@@ -812,6 +813,12 @@ class Dataset():
                      ('srl', 'srl_multihop', 'srl'): list_srl_multihop,
                      ('sent', 'sent_multihop', 'sent'): list_sent_multihop,
                     }
+        if list_query2sent != []:
+            dict_edges[('query', 'query2sent', 'sent')] = list_query2sent
+        if list_query2srl != []:
+            dict_edges[('query', 'query2srl', 'srl')] =  list_query2srl
+        if list_query2ent != []:
+            dict_edges[('query', 'query2ent', 'ent')] = list_query2ent
         if list_ent2srl != []:
             dict_edges[('ent', 'ent2srl', 'srl')] = list_ent2srl     # lbl: [ENT2SRL]
         if list_ent2tok != []:
