@@ -400,17 +400,18 @@ class HeteroRGCNLayer(nn.Module):
         if 'ent' in G.ntypes:
             G['ent2tok'].update_all(self.message_func_2tok, fn.sum('m', 'h_ent'))
         #batched all tokens since we want to put into the GRU (srl, ent, hidden=tok) so batch size = 512
-        gru_input = None
+        
         h_tok = self.node_trans(G.nodes['tok'].data['h'])
         f_t = self.softmax(self.forget_gate(h_tok))
         h_tok_gru = h_tok.view(1,-1,self.in_size)
-        if 'h_srl' in G.nodes['tok'].data:
-            h_srl = G.nodes['tok'].data.pop('h_srl').view(1,-1,self.in_size)
-            gru_input = h_srl
+        gru_input = h_tok_gru
         if 'h_ent' in G.nodes['tok'].data:
             # there can be an instance without entities (not common anyway)
             h_ent = G.nodes['tok'].data.pop('h_ent').view(1,-1,self.in_size)
-            gru_input = torch.cat((h_ent, h_tok_gru), dim=0) 
+            gru_input = torch.cat((h_ent, h_tok_gru), dim=0)
+        if 'h_srl' in G.nodes['tok'].data:
+            h_srl = G.nodes['tok'].data.pop('h_srl').view(1,-1,self.in_size)
+            gru_input = torch.cat((h_srl, gru_input), dim=0)
         cand_htok = self.gru_node2tok(gru_input)[0][-1]
         G.nodes['tok'].data['h'] = f_t * h_tok + (1 - f_t) * cand_htok
 
@@ -1515,13 +1516,13 @@ def record_eval_metric(neptune, metrics):
 
 
 # %%
-model_path = 'models/ans_type_pred_forget_htok'
+model_path = 'models/ans_type_pred_forget_htok_v2'
 
 best_eval_em = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="561 + forget htok", params=PARAMS, upload_source_files=['src/models/GAT_Hierar_Tok_Node_Aggr.py']):
-    neptune.set_property('server', 'irgpu11')
+with neptune.create_experiment(name="561 + forget htok v2", params=PARAMS, upload_source_files=['src/models/GAT_Hierar_Tok_Node_Aggr.py']):
+    neptune.set_property('server', 'nipa')
     neptune.set_property('training_set_path', training_path)
     neptune.set_property('dev_set_path', dev_path)
 
@@ -1593,22 +1594,22 @@ with neptune.create_experiment(name="561 + forget htok", params=PARAMS, upload_s
                 scheduler.step()
                 model.zero_grad()
                 
-                # if (step +1) % 10000 == 0:
-                #     #############################
-                #     ######### Validation ########
-                #     #############################
-                #     validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
-                #                             dev_tensor_input_ids, dev_tensor_attention_masks, 
-                #                             dev_tensor_token_type_ids,
-                #                             dev_list_span_idx)
-                #     metrics = validation.do_validation()
-                #     model.train()
-                #     record_eval_metric(neptune, metrics)
+                if epoch_i == 0 and (step +1) == 10000 :
+                    #############################
+                    ######### Validation ########
+                    #############################
+                    validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
+                                            dev_tensor_input_ids, dev_tensor_attention_masks, 
+                                            dev_tensor_token_type_ids,
+                                            dev_list_span_idx)
+                    metrics = validation.do_validation()
+                    model.train()
+                    record_eval_metric(neptune, metrics)
 
-                #     curr_em = metrics['ans_em']
-                #     if  curr_em > best_eval_em:
-                #         best_eval_em = curr_em
-                #         model.save_pretrained(model_path) 
+                    curr_em = metrics['ans_em']
+                    if  curr_em > best_eval_em:
+                        best_eval_em = curr_em
+                        model.save_pretrained(model_path) 
             total_train_loss += total_loss.detach().item()
 
             # free-up gpu memory
