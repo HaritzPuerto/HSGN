@@ -520,19 +520,19 @@ class HGNModel(BertPreTrainedModel):
                                dict_params['residual'])
         ## node classification
         ### ent node
-        self.ent_classifier = nn.Sequential(nn.Linear(2*dict_params['out_feats'],
+        self.ent_classifier = nn.Sequential(nn.Linear(3*dict_params['out_feats'],
                                                       dict_params['hidden_size_classifier']),
                                             nn.ReLU(),
                                             nn.Linear(dict_params['hidden_size_classifier'],
                                                       2))
         ### srl node
-        self.srl_classifier = nn.Sequential(nn.Linear(2*dict_params['out_feats'],
+        self.srl_classifier = nn.Sequential(nn.Linear(3*dict_params['out_feats'],
                                                       dict_params['hidden_size_classifier']),
                                             nn.ReLU(),
                                             nn.Linear(dict_params['hidden_size_classifier'],
                                                       2))
         ### sent node
-        self.sent_classifier = nn.Sequential(nn.Linear(2*dict_params['out_feats'],
+        self.sent_classifier = nn.Sequential(nn.Linear(3*dict_params['out_feats'],
                                                        dict_params['hidden_size_classifier']),
                                             nn.ReLU(),
                                             nn.Linear(dict_params['hidden_size_classifier'],
@@ -651,7 +651,8 @@ class HGNModel(BertPreTrainedModel):
         if train:
             sent_emb = graph_emb['sent'][sample_sent_nodes]
             # add skip-connection
-            logits_sent = self.sent_classifier(torch.cat((graph_emb['sent'][sample_sent_nodes],
+            logits_sent = self.sent_classifier(torch.cat((graph_emb['query'],
+                                                          graph_emb['sent'][sample_sent_nodes],
                                                           initial_graph_emb['sent'][sample_sent_nodes]), dim=1))
             assert not torch.isnan(logits_sent).any() 
             
@@ -660,7 +661,8 @@ class HGNModel(BertPreTrainedModel):
                 logits_srl = None
                 srl_labels = None
             else:
-                logits_srl = self.srl_classifier(torch.cat((graph_emb['srl'][sample_srl_nodes],
+                logits_srl = self.srl_classifier(torch.cat((graph_emb['query'],
+                                                            graph_emb['srl'][sample_srl_nodes],
                                                             initial_graph_emb['srl'][sample_srl_nodes]), dim=1))
                 # shape [num_ent_nodes, 2] 
                 assert not torch.isnan(logits_srl).any()
@@ -672,7 +674,8 @@ class HGNModel(BertPreTrainedModel):
                 logits_ent = None
                 ent_labels = None
             else:
-                logits_ent = self.ent_classifier(torch.cat((graph_emb['ent'][sample_ent_nodes],
+                logits_ent = self.ent_classifier(torch.cat((graph_emb['query'],
+                                                            graph_emb['ent'][sample_ent_nodes],
                                                             initial_graph_emb['ent'][sample_ent_nodes]), dim=1))
                 # shape [num_ent_nodes, 2] 
                 assert not torch.isnan(logits_ent).any()
@@ -685,17 +688,20 @@ class HGNModel(BertPreTrainedModel):
         else:
             sent_emb = graph_emb['sent']
             # add skip-connection
-            logits_sent = self.sent_classifier(torch.cat((graph_emb['sent'],
+            logits_sent = self.sent_classifier(torch.cat((graph_emb['query'], 
+                                                          graph_emb['sent'],
                                                           initial_graph_emb['sent']), dim=1))
             assert not torch.isnan(logits_sent).any()
-            logits_srl = self.srl_classifier(torch.cat((graph_emb['srl'],
+            logits_srl = self.srl_classifier(torch.cat((graph_emb['query'],
+                                                        graph_emb['srl'],
                                                         initial_graph_emb['srl']), dim=1))
             # shape [num_ent_nodes, 2] 
             assert not torch.isnan(logits_srl).any()
             logits_ent = None
             ent_labels = None
             if 'ent' in graph.ntypes:
-                logits_ent = self.ent_classifier(torch.cat((graph_emb['ent'],
+                logits_ent = self.ent_classifier(torch.cat((graph_emb['query'],
+                                                            graph_emb['ent'],
                                                             initial_graph_emb['ent']), dim=1))
                 # shape [num_ent_nodes, 2]
                 assert not torch.isnan(logits_ent).any()
