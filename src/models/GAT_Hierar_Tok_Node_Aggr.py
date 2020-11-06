@@ -85,8 +85,8 @@ pretrained_weights = 'bert-base-cased'
 # ## Processing
 
 # %%
-training_path = os.path.join(data_path, "processed/training/heterog_20201004_query_edges/")
-dev_path = os.path.join(data_path, "processed/dev/heterog_20201004_query_edges/")
+training_path = os.path.join(data_path, "processed/training/heterog_20201106_query_edges_v2/")
+dev_path = os.path.join(data_path, "processed/dev/heterog_20201106_query_edges_v2/")
 
 with open(os.path.join(training_path, 'list_span_idx.p'), 'rb') as f:
     list_span_idx = pickle.load(f)
@@ -520,19 +520,19 @@ class HGNModel(BertPreTrainedModel):
                                dict_params['residual'])
         ## node classification
         ### ent node
-        self.ent_classifier = nn.Sequential(nn.Linear(2*dict_params['out_feats'],
+        self.ent_classifier = nn.Sequential(nn.Linear(3*dict_params['out_feats'],
                                                       dict_params['hidden_size_classifier']),
                                             nn.ReLU(),
                                             nn.Linear(dict_params['hidden_size_classifier'],
                                                       2))
         ### srl node
-        self.srl_classifier = nn.Sequential(nn.Linear(2*dict_params['out_feats'],
+        self.srl_classifier = nn.Sequential(nn.Linear(3*dict_params['out_feats'],
                                                       dict_params['hidden_size_classifier']),
                                             nn.ReLU(),
                                             nn.Linear(dict_params['hidden_size_classifier'],
                                                       2))
         ### sent node
-        self.sent_classifier = nn.Sequential(nn.Linear(2*dict_params['out_feats'],
+        self.sent_classifier = nn.Sequential(nn.Linear(3*dict_params['out_feats'],
                                                        dict_params['hidden_size_classifier']),
                                             nn.ReLU(),
                                             nn.Linear(dict_params['hidden_size_classifier'],
@@ -655,7 +655,9 @@ class HGNModel(BertPreTrainedModel):
         if train:
             sent_emb = graph_emb['sent'][sample_sent_nodes]
             # add skip-connection
-            logits_sent = self.sent_classifier(torch.cat((graph_emb['sent'][sample_sent_nodes],
+            query_emb = torch.cat([graph_emb['query'] for i in range(len(sample_sent_nodes))], dim=0)
+            logits_sent = self.sent_classifier(torch.cat((query_emb,
+                                                          graph_emb['sent'][sample_sent_nodes],
                                                           initial_graph_emb['sent'][sample_sent_nodes]), dim=1))
             assert not torch.isnan(logits_sent).any() 
             
@@ -664,7 +666,9 @@ class HGNModel(BertPreTrainedModel):
                 logits_srl = None
                 srl_labels = None
             else:
-                logits_srl = self.srl_classifier(torch.cat((graph_emb['srl'][sample_srl_nodes],
+                query_emb = torch.cat([graph_emb['query'] for i in range(len(sample_srl_nodes))], dim=0)
+                logits_srl = self.srl_classifier(torch.cat((query_emb,
+                                                            graph_emb['srl'][sample_srl_nodes],
                                                             initial_graph_emb['srl'][sample_srl_nodes]), dim=1))
                 # shape [num_ent_nodes, 2] 
                 assert not torch.isnan(logits_srl).any()
@@ -676,7 +680,9 @@ class HGNModel(BertPreTrainedModel):
                 logits_ent = None
                 ent_labels = None
             else:
-                logits_ent = self.ent_classifier(torch.cat((graph_emb['ent'][sample_ent_nodes],
+                query_emb = torch.cat([graph_emb['query'] for i in range(len(sample_ent_nodes))], dim=0)
+                logits_ent = self.ent_classifier(torch.cat((query_emb,
+                                                            graph_emb['ent'][sample_ent_nodes],
                                                             initial_graph_emb['ent'][sample_ent_nodes]), dim=1))
                 # shape [num_ent_nodes, 2] 
                 assert not torch.isnan(logits_ent).any()
@@ -689,17 +695,23 @@ class HGNModel(BertPreTrainedModel):
         else:
             sent_emb = graph_emb['sent']
             # add skip-connection
-            logits_sent = self.sent_classifier(torch.cat((graph_emb['sent'],
+            query_emb = torch.cat([graph_emb['query'] for i in range(graph_emb['sent'].shape[0])], dim=0)
+            logits_sent = self.sent_classifier(torch.cat((query_emb, 
+                                                          graph_emb['sent'],
                                                           initial_graph_emb['sent']), dim=1))
             assert not torch.isnan(logits_sent).any()
-            logits_srl = self.srl_classifier(torch.cat((graph_emb['srl'],
+            query_emb = torch.cat([graph_emb['query'] for i in range(graph_emb['srl'].shape[0])], dim=0)
+            logits_srl = self.srl_classifier(torch.cat((query_emb,
+                                                        graph_emb['srl'],
                                                         initial_graph_emb['srl']), dim=1))
             # shape [num_ent_nodes, 2] 
             assert not torch.isnan(logits_srl).any()
             logits_ent = None
             ent_labels = None
             if 'ent' in graph.ntypes:
-                logits_ent = self.ent_classifier(torch.cat((graph_emb['ent'],
+                query_emb = torch.cat([graph_emb['query'] for i in range(graph_emb['ent'].shape[0])], dim=0)
+                logits_ent = self.ent_classifier(torch.cat((query_emb,
+                                                            graph_emb['ent'],
                                                             initial_graph_emb['ent']), dim=1))
                 # shape [num_ent_nodes, 2]
                 assert not torch.isnan(logits_ent).any()
@@ -1489,29 +1501,6 @@ class Validation():
 # metrics
 
 # %%
-# # %%
-
-
-# # %%
-
-
-# # %%
-# list(preds['answer'].items())[:50]
-
-# # %%
-
-
-# # %%
-# validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
-#                         dev_tensor_input_ids, dev_tensor_attention_masks, 
-#                         dev_tensor_token_type_ids,
-#                         dev_list_span_idx)
-# metrics = validation.do_validation()
-
-# # %%
-# metrics
-
-# %%
 # validation = Validation(model, hotpot_dev, dev_list_graphs[:10], tokenizer,
 #                         dev_tensor_input_ids, dev_tensor_attention_masks, 
 #                         dev_tensor_token_type_ids,
@@ -1555,7 +1544,7 @@ model_path = 'models/ans_type_pred_cat_q_sent'
 best_eval_em = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="ans span pred sum([q;sent])", params=PARAMS, upload_source_files=['src/models/GAT_Hierar_Tok_Node_Aggr.py']):
+with neptune.create_experiment(name="better use query + ans span pred sum([q;sent])", params=PARAMS, upload_source_files=['src/models/GAT_Hierar_Tok_Node_Aggr.py']):
     neptune.set_property('server', 'irgpu11')
     neptune.set_property('training_set_path', training_path)
     neptune.set_property('dev_set_path', dev_path)
@@ -1628,7 +1617,7 @@ with neptune.create_experiment(name="ans span pred sum([q;sent])", params=PARAMS
                 scheduler.step()
                 model.zero_grad()
                 
-                if (step +1) == 10000:
+                if epoch_i == 0 and (step +1) == 10000:
                     #############################
                     ######### Validation ########
                     #############################
@@ -1636,16 +1625,16 @@ with neptune.create_experiment(name="ans span pred sum([q;sent])", params=PARAMS
                                             dev_tensor_input_ids, dev_tensor_attention_masks, 
                                             dev_tensor_token_type_ids,
                                             dev_list_span_idx)
-                    metrics, pred_json_oracle = validation.do_validation()
-                    model.train()
-                    record_eval_metric(neptune, metrics)
-
-                    curr_em = metrics['ans_em']
+                    metrics, pred_json = validation.do_validation()
                     if  curr_em > best_eval_em:
                         best_eval_em = curr_em
                         model.save_pretrained(model_path) 
-                        with open(os.path.join(model_path, 'oracle_output.json'), 'w+') as f:
-                            json.dump(pred_json_oracle, f)
+                        with open(os.join.path(model_path, 'output_oracle.json'), 'w+') as f:
+                            json.dump(pred_json, f)
+                if epoch_i == 2 and (step +1) % 10000 == 0:
+                    model_path_step = model_path + "/epoch3/step_" + str(step)
+                    os.mkdir(model_path_step)
+                    model.save_pretrained(model_path_step)
             total_train_loss += total_loss.detach().item()
 
             # free-up gpu memory
@@ -1672,7 +1661,7 @@ with neptune.create_experiment(name="ans span pred sum([q;sent])", params=PARAMS
                                 dev_tensor_input_ids, dev_tensor_attention_masks, 
                                 dev_tensor_token_type_ids,
                                 dev_list_span_idx)
-        metrics, pred_json_oracle = validation.do_validation()
+        metrics, pred_json = validation.do_validation()
         model.train()
         record_eval_metric(neptune, metrics)
 
@@ -1680,8 +1669,8 @@ with neptune.create_experiment(name="ans span pred sum([q;sent])", params=PARAMS
         if  curr_em >= best_eval_em:
             best_eval_em = curr_em
             model.save_pretrained(model_path) 
-            with open(os.path.join(model_path, 'oracle_output.json'), 'w+') as f:
-                json.dump(pred_json_oracle, f)
+            with open(os.join.path(model_path, 'output_oracle.json'), 'w+') as f:
+                json.dump(pred_json, f)
 
     # Calculate the average loss over all of the batches.
     avg_train_loss = total_train_loss / len(train_dataloader)            
