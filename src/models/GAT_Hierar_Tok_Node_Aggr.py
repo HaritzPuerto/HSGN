@@ -1657,7 +1657,7 @@ with neptune.create_experiment(name="ans_type_pred_better_use_query_node", param
                     if  curr_em > best_eval_em:
                         best_eval_em = curr_em
                         model.save_pretrained(model_path) 
-                        with open(os.join.path(model_path, 'output.json'), 'w+') as f:
+                        with open(os.path.join(model_path, 'output.json'), 'w+') as f:
                             json.dump(pred_json, f)
                 if epoch_i == 2 and (step +1) % 10000 == 0:
                     model_path_step = model_path + "/epoch3/step_" + str(step)
@@ -1697,7 +1697,7 @@ with neptune.create_experiment(name="ans_type_pred_better_use_query_node", param
         if  curr_em > best_eval_em:
             best_eval_em = curr_em
             model.save_pretrained(model_path) 
-            with open(os.join.path(model_path, 'output.json'), 'w+') as f:
+            with open(os.path.join(model_path, 'output.json'), 'w+') as f:
                 json.dump(pred_json, f)
 
     # Calculate the average loss over all of the batches.
