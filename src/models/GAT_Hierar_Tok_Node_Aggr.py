@@ -1626,7 +1626,8 @@ with neptune.create_experiment(name="better use query + ans span pred sum([q;sen
                                             dev_tensor_token_type_ids,
                                             dev_list_span_idx)
                     metrics, pred_json = validation.do_validation()
-                    if  curr_em > best_eval_em:
+                    curr_em = metrics['ans_em']
+                    if curr_em > best_eval_em:
                         best_eval_em = curr_em
                         model.save_pretrained(model_path) 
                         with open(os.path.join(model_path, 'output_oracle.json'), 'w+') as f:
