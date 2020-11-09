@@ -269,7 +269,6 @@ class Dataset():
         list_ent2ent_self = []
         list_token2token = []
         ## multi-hop
-        list_doc_multihop = []
         list_sent_multihop = []
         list_srl_multihop = []
         list_ent_multihop = []
@@ -290,23 +289,18 @@ class Dataset():
         ## metadata of srl
         list_srl_context_idx = []
         list_srl_st_end_idx = []
-        list_srl_lbl = []
         ## metadata of srl tmp
         list_srl_tmp_context_idx = []
         list_srl_tmp_st_end_idx = []
-        list_srl_tmp_lbl = []
         ## metadata of srl loc
         list_srl_loc_context_idx = []
         list_srl_loc_st_end_idx = []
-        list_srl_loc_lbl = []
         ## metadata of ents
         list_ent_context_idx = []
         list_ent_st_end_idx = []
-        list_ent_lbl = []
         # metadata of tokens
         list_token_context_idx = []
         list_token_st_end_idx = []
-        list_token_lbl = []
         # metadata of query
         list_query_st_end_idx = []
         
@@ -317,13 +311,8 @@ class Dataset():
             list_token_context_idx.append(ins_idx)
             list_token_st_end_idx.append((i, i+1))
             list_token2token.append((i, i))  # lbl: [TOK2TOK_SELF]
-            list_token_lbl.append(0)
             token_node_idx += 1
         
-        ans_str = hotpot_instance['answer']
-        ans_encoded = self.tokenizer.encode(ans_str, add_special_tokens=False)
-        ans_detokenized = self.tokenizer.decode(ans_encoded)
-        yn_ans = ans_str == 'yes' or ans_str == 'no'
         ans_st_idx = -1
         ans_end_idx = -1
         list_doc_nodes = []
@@ -373,20 +362,13 @@ class Dataset():
                 # metadata sent
                 list_sent_context_idx.append(ins_idx)
                 list_sent_st_end_idx.append((sent_st, sent_end))
-                sent_lbl = doc_title in dict_supporting_docs and sent_idx in dict_supporting_docs[doc_title]
-                list_sent_lbl.append(sent_lbl)
                 # end metada sent
                 
                 for tok in range(sent_st, sent_end):
                     list_sent2tok.append((current_sent_node, tok))  # lbl: [SENT2TOK]
                     list_tok2sent.append((tok, current_sent_node))  # lbl: [TOK2SENT]
                 
-                if sent_lbl or (yn_ans and sent_idx == 0):
-                    try:
-                        ans_st_idx = find_sublist_idx(context[sent_st:sent_end], ans_encoded) + sent_st
-                        ans_end_idx = min(ans_st_idx + len(ans_encoded), self.max_len-1)
-                    except:
-                        pass
+                
                 dict_sent_node2metadata[current_sent_node] = {'doc_idx': doc_idx, 'sent_idx': sent_idx}
                 sent_str = self.tokenizer.decode(context[sent_st:sent_end])
 #                 print("### sent", lbl, sent_str)
@@ -465,8 +447,6 @@ class Dataset():
                                 list_srl_context_idx.append(ins_idx)
                                 list_srl_st_end_idx.append((st_tok_idx, end_tok_idx))
                                 #list_node_type.append(node_type2idx['srl'])
-                                srl_lbl = self.srl_with_ans(arg_str, ans_detokenized, sent_lbl)
-                                list_srl_lbl.append(srl_lbl)
                                 # ent node
                                 current_srl_node = srl_node_idx
                                 srl_node_idx += 1
@@ -493,10 +473,6 @@ class Dataset():
                                         st_tok_idx = find_sublist_idx(context[sent_st:sent_end], ent_encoded) + sent_st
                                         end_tok_idx = min(st_tok_idx + len(ent_encoded), self.max_len)
                                         
-                                        lbl = (fuzz.token_set_ratio(ans_detokenized, ent) >= 90)
-                                        if (not srl_lbl) and lbl:
-                                            srl_lbl = True
-                                            list_lbl[-1] = srl_lbl
                                         # ent node
                                         if ent in dict_ent_str2ent_node:
                                             current_ent_node = dict_ent_str2ent_node[ent]
@@ -508,7 +484,6 @@ class Dataset():
                                             # metadata ent
                                             list_ent_context_idx.append(ins_idx)
                                             list_ent_st_end_idx.append((st_tok_idx, end_tok_idx))
-                                            list_ent_lbl.append(lbl)
                                         
 #                                         print("ent:", current_ent_node, ent)
 #                                         print("ent2srl", current_ent_node, current_srl_node)
@@ -641,10 +616,7 @@ class Dataset():
                         end_tok_idx = min(st_tok_idx + len(arg_encoded), self.max_len)
                         # metadata ent
                         list_srl_context_idx.append(ins_idx)
-                        list_srl_st_end_idx.append((st_tok_idx, end_tok_idx))
-                        #list_node_type.append(node_type2idx['srl'])
-                        srl_lbl = self.srl_with_ans(arg_str, ans_detokenized, sent_lbl)
-                        list_srl_lbl.append(srl_lbl)
+                        list_srl_st_end_idx.append((st_tok_idx, end_tok_idx))                        
                         # ent node
                         current_srl_node = srl_node_idx
                         srl_node_idx += 1
@@ -670,11 +642,6 @@ class Dataset():
                                 # if I search using the full context instead of its sentence I may get a wrong entity (the entity may appear many times, including in the question)
                                 st_tok_idx = find_sublist_idx(context[q_st:q_end], ent_encoded) + q_st
                                 end_tok_idx = min(st_tok_idx + len(ent_encoded), self.max_len)
-
-                                lbl = (fuzz.token_set_ratio(ans_detokenized, ent) >= 90)
-                                if (not srl_lbl) and lbl:
-                                    srl_lbl = True
-                                    list_lbl[-1] = srl_lbl
                                 # ent node
                                 if ent in dict_ent_str2ent_node:
                                     current_ent_node = dict_ent_str2ent_node[ent]
@@ -686,7 +653,6 @@ class Dataset():
                                     # metadata ent
                                     list_ent_context_idx.append(ins_idx)
                                     list_ent_st_end_idx.append((st_tok_idx, end_tok_idx))
-                                    list_ent_lbl.append(lbl)
                                     
                                 # add edges (srl_arg -> ent and ent -> srl_arg)
                                 list_srl2ent.append((current_srl_node, current_ent_node))  # lbl: [SRL2ENT]
@@ -755,7 +721,6 @@ class Dataset():
         list_ent2at = []
         for ent in range(ent_node_idx):
             list_ent2at.append((ent, 0)) # lbl: [ENT2AT]
-        at_label = ans_type(ans_str)
         # make the heterogenous graph
         list_srl2self = [(v, v) for v in range(srl_node_idx)]
         # create ent rel using SRL predicates
@@ -803,35 +768,22 @@ class Dataset():
         if list_query2sent_pred != []:
             dict_edges['query', 'query2srl_pred', 'sent'] = list_query2sent_pred
         graph = dgl.heterograph(dict_edges)
-        # doc metadata
-#         graph.nodes['doc'].data['st_end_idx'] =  torch.tensor(list_doc_st_end_idx)
-# #         graph.nodes['doc']['list_context_idx'] = torch.tensor(list_doc_context_idx).reshape(-1,1)
-#         graph.nodes['doc'].data['labels'] = torch.tensor(list_doc_lbl).view(-1,1)
         # sent metadata
         graph.nodes['sent'].data['st_end_idx'] =  torch.tensor(list_sent_st_end_idx)
-#         graph.nodes['sent']['list_context_idx'] = torch.tensor(list_sent_context_idx).reshape(-1,1)
         graph.nodes['sent'].data['labels'] = torch.tensor(list_sent_lbl).view(-1,1)
         # srl metadata
         graph.nodes['srl'].data['st_end_idx'] =  torch.tensor(list_srl_st_end_idx)
-#         graph.nodes['srl']['list_context_idx'] = torch.tensor(list_srl_context_idx).reshape(-1,1)
-        graph.nodes['srl'].data['labels'] = torch.tensor(list_srl_lbl).view(-1,1)
         # srl_loc metadata
         if list_srl_loc2srl != []:
             graph.nodes['srl_loc'].data['st_end_idx'] =  torch.tensor(list_srl_loc_st_end_idx)
-#             graph.nodes['srl_loc']['list_context_idx'] = torch.tensor(list_srl_loc_context_idx).reshape(-1,1)
         # srl_tmp metadata
         if list_srl_tmp2srl != []:
             graph.nodes['srl_tmp'].data['st_end_idx'] =  torch.tensor(list_srl_tmp_st_end_idx)
-#             graph.nodes['srl_tmp']['list_context_idx'] = torch.tensor(list_srl_tmp_context_idx).reshape(-1,1) 
         # ent metadata
-        if list_ent_lbl != []:
+        if 'ent' in graph.ntypes:
             graph.nodes['ent'].data['st_end_idx'] =  torch.tensor(list_ent_st_end_idx)
-    #         graph.nodes['ent']['list_context_idx'] = torch.tensor(list_ent_context_idx).reshape(-1,1)
-            graph.nodes['ent'].data['labels'] = torch.tensor(list_ent_lbl).view(-1,1)
         # token metadata
         graph.nodes['tok'].data['st_end_idx'] =  torch.tensor(list_token_st_end_idx)
-#         graph.nodes['tok']['list_context_idx'] = torch.tensor(list_token_context_idx).reshape(-1,1)
-        graph.nodes['tok'].data['labels'] = torch.tensor(list_token_lbl).view(-1,1)
         # query metadata
         if 'query' in graph.ntypes:
             graph.nodes['query'].data['st_end_idx'] =  torch.tensor(list_query_st_end_idx)
