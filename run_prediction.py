@@ -10,7 +10,7 @@ def convert_sae_doc_ret_output2our_input(hotpot):
     with open('SAE/output/pred_gold_idx.json', 'r') as f:
         pred_gold_idx = json.load(f)
     out = dict()
-    for ins_idx, pred in enumerate(pred_gold_idx):
+    for ins_idx, pred in enumerate(pred_gold_idx[:10]):
         dict_doc2pred = dict()
         if len(hotpot[ins_idx]['context']) == 2:
             dict_doc2pred = {0: 1, 1: 1}
@@ -40,15 +40,9 @@ with open(input_file, "r") as f:
 hotpot = hotpot[:10]
 with open("input_sample.json", 'w+') as f:
     json.dump(hotpot, f)
-# subprocess.call("CUDA_VISIBLE_DEVICES=0 python -u SAE/main.py {}".format("input_sample.json"), shell=True)
-# subprocess.call("CUDA_VISIBLE_DEVICES=0 python -u SAE/docfilter.py --do_lower_case \
-                    # --dev_name {} --output_name data/output/pred_gold_idx.json".format("input_sample.json"), shell=True)
+
 dict_ins2dict_doc2pred = convert_sae_doc_ret_output2our_input(hotpot)
-# print("Loading the document retrieval model")
-# doc_retr = DocumentRetrieval(device, doc_retr_model_path)
-# print("Computing the relevant documents")
-# dict_ins2dict_doc2pred = doc_retr.predict_relevant_docs(hotpot)
-# print("Creating graphs for the predicted relevant documents")
+print("Creating graphs for the predicted relevant documents")
 output = create_dataloader(hotpot, dict_ins2dict_doc2pred, pretrained_weights)
 list_graphs = output['list_graphs']
 list_context = output['list_context']
