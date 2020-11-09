@@ -437,26 +437,14 @@ class HGNModel(BertPreTrainedModel):
             assert not torch.isnan(end_logits).any()
         
         # loss
-        final_loss = 0
-        loss_ans_type = None
-        if ans_type_label is not None:
-            loss_ans_type = loss_fn_ans_type(ans_type_logits, ans_type_label)
-            final_loss = self.weight_ans_type_loss + loss_ans_type
-        if span_loss is not None:
-            final_loss += self.weight_span_loss*span_loss
-        if graph_out['sent']['loss'] is not None:
-            final_loss += self.weight_sent_loss*graph_out['sent']['loss']
-        if graph_out['srl']['loss'] is not None:
-            final_loss += self.weight_srl_loss*graph_out['srl']['loss']
-        if graph_out['ent']['loss'] is not None:
-            final_loss += self.weight_ent_loss*graph_out['ent']['loss']
+        
        
-        return {'loss': final_loss, 
+        return {'loss': 0, 
                 'sent': graph_out['sent'], 
                 'ent': graph_out['ent'],
                 'srl': graph_out['srl'],
-                'ans_type': {'loss': loss_ans_type, 'logits': ans_type_logits},
-                'span': {'loss': span_loss, 'start_logits': start_logits, 'end_logits': end_logits}}  
+                'ans_type': {'loss': 0, 'logits': ans_type_logits},
+                'span': {'loss': 0, 'start_logits': start_logits, 'end_logits': end_logits}}  
     
     def attention(self, x, z):
         # x: batch_size X max_nodes X feat_dim
@@ -504,7 +492,6 @@ class HGNModel(BertPreTrainedModel):
                                                             initial_graph_emb['srl'][sample_srl_nodes]), dim=1))
                 # shape [num_ent_nodes, 2] 
                 assert not torch.isnan(logits_srl).any()
-                srl_labels = graph.nodes['srl'].data['labels'][sample_srl_nodes].to(device)
                 # shape [num_sampled_srl_nodes, 1]
             
             # contains the indexes of the ent nodes
@@ -516,9 +503,7 @@ class HGNModel(BertPreTrainedModel):
                                                             initial_graph_emb['ent'][sample_ent_nodes]), dim=1))
                 # shape [num_ent_nodes, 2] 
                 assert not torch.isnan(logits_ent).any()
-                ent_labels = graph.nodes['ent'].data['labels'][sample_ent_nodes].to(device)
                 # shape [num_sampled_ent_nodes, 1]    
-            sent_labels = graph.nodes['sent'].data['labels'][sample_sent_nodes].to(device)
             # shape [num_sampled_sent_nodes, 1]
             
             
@@ -539,18 +524,14 @@ class HGNModel(BertPreTrainedModel):
                                                             initial_graph_emb['ent']), dim=1))
                 # shape [num_ent_nodes, 2]
                 assert not torch.isnan(logits_ent).any()
-                ent_labels = graph.nodes['ent'].data['labels'].to(device)
                 # shape [num_srl_nodes, 1]
                 
             # labels
-            sent_labels = graph.nodes['sent'].data['labels'].to(device)
             # shape [num_sent_nodes, 1]
-            srl_labels = graph.nodes['srl'].data['labels'].to(device)
             # shape [num_sampled_srl_nodes, 1]
             
            
         # sent loss
-        loss_sent = loss_fn(logits_sent, sent_labels.view(-1).long())
         probs_sent = F.softmax(logits_sent, dim=1).cpu()
         # shape [num_sent_nodes, 2]
         
@@ -561,7 +542,6 @@ class HGNModel(BertPreTrainedModel):
             loss_srl = None
             probs_srl = None
         else:
-            loss_srl = loss_fn(logits_srl, srl_labels.view(-1).long())
             probs_srl = F.softmax(logits_srl, dim=1).cpu()
             # shape [num_srl_nodes, 2]
 
@@ -572,21 +552,13 @@ class HGNModel(BertPreTrainedModel):
             loss_ent = None
             probs_ent = None
         else:        
-            loss_ent = loss_fn(logits_ent, ent_labels.view(-1).long())
             probs_ent = F.softmax(logits_ent, dim=1).cpu()
             # shape [num_ent_nodes, 2]
 
-        # labels to cpu
-        sent_labels = sent_labels.cpu().view(-1)
-        if srl_labels is not None:
-            srl_labels = srl_labels.cpu().view(-1)
-        if ent_labels is not None:
-            ent_labels = ent_labels.cpu().view(-1)
-
         return ({'sent': {'loss': loss_sent, 'probs': probs_sent, 'logits': logits_sent, 
-                          'emb': sent_emb, 'lbl': sent_labels},
-                'srl': {'loss': loss_srl, 'probs': probs_srl, 'lbl': srl_labels},
-                'ent': {'loss': loss_ent, 'probs': probs_ent, 'lbl': ent_labels},
+                          'emb': sent_emb},
+                'srl': {'loss': loss_srl, 'probs': probs_srl},
+                'ent': {'loss': loss_ent, 'probs': probs_ent},
                 },
                 graph_emb)
     
