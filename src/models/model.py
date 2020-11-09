@@ -36,8 +36,8 @@ np.random.seed(random_seed)
 torch.manual_seed(random_seed)
 torch.cuda.manual_seed_all(random_seed)
 
-pretrained_weights = 'bert-base-cased'
-#pretrained_weights = 'bert-large-cased-whole-word-masking'
+#pretrained_weights = 'bert-base-cased'
+pretrained_weights = 'bert-large-cased-whole-word-masking'
 device = 'cuda'
 
 weights = torch.tensor([1., 30.9, 31.], device=device)
@@ -52,28 +52,7 @@ def get_sent_node_from_srl_node(graph, srl_node, list_srl_nodes):
     # there is only one element by construction of the graph
     return list_sent[0]
 
-
 # %%
-class LabelSmoothingLoss(nn.Module):
-    def __init__(self, classes=2, smoothing=0.1, dim=-1):
-        super(LabelSmoothingLoss, self).__init__()
-        self.confidence = 1.0 - smoothing
-        self.smoothing = smoothing
-        self.cls = classes
-        self.dim = dim
-
-    def forward(self, pred, target):
-        pred = pred.log_softmax(dim=self.dim)
-        with torch.no_grad():
-            # true_dist = pred.data.clone()
-            true_dist = torch.zeros_like(pred)
-            true_dist.fill_(self.smoothing / (self.cls - 1))
-            true_dist.scatter_(1, target.data.unsqueeze(1), self.confidence)
-        return torch.mean(torch.sum(-true_dist * pred, dim=self.dim))
-
-
-# %%
-loss_fn = LabelSmoothingLoss()
 
 loss_fn = nn.CrossEntropyLoss()
 # %%
