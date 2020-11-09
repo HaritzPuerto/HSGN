@@ -345,7 +345,6 @@ class Dataset():
             #get supp sentences
             doc_title = hotpot_instance['context'][doc_idx][0]
     #         print("doc title", doc_title)
-            dict_supporting_docs = self.__get_dict_supporting_doc_idx2sent_idx(hotpot_instance['supporting_facts'])
             # to fully connect all sent nodes
             list_sent_nodes = []
             ########################################################
