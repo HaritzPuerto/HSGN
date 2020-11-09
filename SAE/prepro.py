@@ -58,6 +58,7 @@ def get_features(data_path, tokenizer, use_mini=False, max_seq_len=512):
     max_sent_len=0
     with open(data_path, 'r') as f:
         d = json.load(f)
+    d = d[:10]
     all_labels, all_offsets, all_ques, all_docs, all_title = [],[],[],[],[]
     for i, ex in enumerate(d):
         if use_mini and i == 128:
