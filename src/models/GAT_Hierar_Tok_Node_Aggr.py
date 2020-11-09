@@ -45,7 +45,7 @@ torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
 # %%
-data_path = "data/"
+data_path = "../../data/"
 hotpot_qa_path = os.path.join(data_path, "external")
 
 with open(os.path.join(hotpot_qa_path, "hotpot_train_v1.1.json"), "r") as f:
@@ -166,13 +166,12 @@ for (g_file, metadata_file) in tqdm(list_graph_metadata_files):
         graph = add_metadata2graph(graph, metadata)
         dev_list_graphs.append(graph)
 
-
 # %%
-def graph_for_eval(graph):
-    return ((sum(graph.nodes['sent'].data['labels']) > 0) and
-            (sum(graph.nodes['srl'].data['labels']) > 0) and
-            (sum(graph.nodes['ent'].data['labels']) > 0 )
-           )
+# def graph_for_eval(graph):
+#     return ((sum(graph.nodes['sent'].data['labels']) > 0) and
+#             (sum(graph.nodes['srl'].data['labels']) > 0) and
+#             (sum(graph.nodes['ent'].data['labels']) > 0 )
+#            )
 
 # %%
 weights = [0., 0., 0.]
@@ -216,8 +215,8 @@ class LabelSmoothingLoss(nn.Module):
 
 
 # %%
-loss_fn = LabelSmoothingLoss()
-
+#loss_fn = LabelSmoothingLoss()
+loss_fn = nn.CrossEntropyLoss()
 # %%
 class NodeNorm(nn.Module):
     def __init__(self, unbiased=False, eps=1e-5):
@@ -541,8 +540,17 @@ class HGNModel(BertPreTrainedModel):
         
         # span prediction
         self.num_labels = config.num_labels
-        self.qa_outputs = nn.Sequential(nn.Linear(config.hidden_size, config.hidden_size), GeLU(), nn.Dropout(dict_params['span_drop']),
+        self.qa_outputs = nn.Sequential(nn.Linear(config.hidden_size, config.hidden_size),
+                                        GeLU(),
+                                        nn.Dropout(dict_params['span_drop']),
                                         nn.Linear(config.hidden_size, 2))
+        
+        # Answer Type
+        self.sfm = nn.Softmax(-1)
+        self.answer_type_classifier = nn.Sequential(nn.Linear(config.hidden_size, config.hidden_size), 
+                                                    GeLU(),
+                                                    nn.Dropout(dict_params['span_drop']),
+                                                    nn.Linear(config.hidden_size, 3)) 
         # init weights
         self.init_weights()
         # params
@@ -563,7 +571,8 @@ class HGNModel(BertPreTrainedModel):
         inputs_embeds=None,
         start_positions=None,
         end_positions=None,
-        train=True
+        train=True,
+        ans_type_label=None
     ):
         outputs = self.bert(
             input_ids,
@@ -578,15 +587,22 @@ class HGNModel(BertPreTrainedModel):
         # Graph forward & node classification
         graph_out, graph_emb = self.graph_forward(graph, sequence_output, train)
         sequence_output = graph_emb['tok'].unsqueeze(0)
-        # span prediction
+         # answer type logits
+        ans_type_logits = self.answer_type_classifier(self.attention(graph_out['sent']['emb'].view(1,-1,dict_params['out_feats']),
+                                                                     graph_out['sent']['logits'][:,1].view(1,-1,1))
+                                                      ).squeeze(1)
+        loss_ans_type = loss_fn_ans_type(ans_type_logits, ans_type_label)
         span_loss = None
         start_logits = None
         end_logits = None
-        span_loss, start_logits, end_logits = self.span_prediction(sequence_output, start_positions, end_positions)
-        assert not torch.isnan(start_logits).any()
-        assert not torch.isnan(end_logits).any()  
+        if (train and ans_type_label == 0) or (not train):
+            # span prediction    
+            span_loss, start_logits, end_logits = self.span_prediction(sequence_output, start_positions, end_positions)
+            assert not torch.isnan(start_logits).any()
+            assert not torch.isnan(end_logits).any()
+        
         # loss
-        final_loss = 0.0
+        final_loss = self.weight_ans_type_loss + loss_ans_type
         if span_loss is not None:
             final_loss += self.weight_span_loss*span_loss
         if graph_out['sent']['loss'] is not None:
@@ -595,13 +611,21 @@ class HGNModel(BertPreTrainedModel):
             final_loss += self.weight_srl_loss*graph_out['srl']['loss']
         if graph_out['ent']['loss'] is not None:
             final_loss += self.weight_ent_loss*graph_out['ent']['loss']
-     
+       
         return {'loss': final_loss, 
                 'sent': graph_out['sent'], 
                 'ent': graph_out['ent'],
                 'srl': graph_out['srl'],
+                'ans_type': {'loss': loss_ans_type, 'logits': ans_type_logits},
                 'span': {'loss': span_loss, 'start_logits': start_logits, 'end_logits': end_logits}}  
     
+    def attention(self, x, z):
+        # x: batch_size X max_nodes X feat_dim
+        # z: attention logits
+        att = nn.functional.softmax(z, dim=1) # batch_size X max_nodes X 1
+        output = torch.bmm(att.transpose(1,2), x)
+        return output
+
     def graph_forward(self, graph, bert_context_emb, train):
         # create graph initial embedding #
         graph_emb = self.graph_initial_embedding(graph, bert_context_emb)
@@ -623,7 +647,9 @@ class HGNModel(BertPreTrainedModel):
         # classify nodes #
         sent_labels = None
         ent_labels = None
+        sent_emb = None
         if train:
+            sent_emb = graph_emb['sent'][sample_sent_nodes]
             # add skip-connection
             logits_sent = self.sent_classifier(torch.cat((graph_emb['sent'][sample_sent_nodes],
                                                           initial_graph_emb['sent'][sample_sent_nodes]), dim=1))
@@ -657,6 +683,7 @@ class HGNModel(BertPreTrainedModel):
             
             
         else:
+            sent_emb = graph_emb['sent']
             # add skip-connection
             logits_sent = self.sent_classifier(torch.cat((graph_emb['sent'],
                                                           initial_graph_emb['sent']), dim=1))
@@ -716,7 +743,8 @@ class HGNModel(BertPreTrainedModel):
         if ent_labels is not None:
             ent_labels = ent_labels.cpu().view(-1)
 
-        return ({'sent': {'loss': loss_sent, 'probs': probs_sent, 'lbl': sent_labels},
+        return ({'sent': {'loss': loss_sent, 'probs': probs_sent, 'logits': logits_sent, 
+                          'emb': sent_emb, 'lbl': sent_labels},
                 'srl': {'loss': loss_srl, 'probs': probs_srl, 'lbl': srl_labels},
                 'ent': {'loss': loss_ent, 'probs': probs_ent, 'lbl': ent_labels},
                 },
@@ -876,6 +904,16 @@ model.cuda()
 # 
 
 # %%
+def get_ans_type_lbl(ins):
+    if ins['answer'] == 'yes':
+        return torch.Tensor([1]).long().to(device)
+    elif ins['answer'] == 'no':
+        return torch.Tensor([2]).long().to(device)
+    else:
+        return torch.Tensor([0]).long().to(device)
+
+
+# %%
 # model.train()
 # for step, b_graph in enumerate(tqdm(list_graphs)):
 #     model.zero_grad()
@@ -885,18 +923,20 @@ model.cuda()
 #     token_type_ids=tensor_token_type_ids[step].unsqueeze(0).to(device) 
 #     start_positions=torch.tensor([list_span_idx[step][0]], device='cuda')
 #     end_positions=torch.tensor([list_span_idx[step][1]], device='cuda')
+#     ans_type_lbl = get_ans_type_lbl(hotpot_train[step])
 #     output = model(b_graph,
 #                    input_ids=input_ids,
 #                    attention_mask=attention_mask,
 #                    token_type_ids=token_type_ids, 
 #                    start_positions=start_positions,
-#                    end_positions=end_positions)
-#     total_loss = output['loss']
-#     total_loss.backward()
-#     torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-#     optimizer.step()
-#     scheduler.step()
-#     model.zero_grad()
+#                    end_positions=end_positions,
+#                    ans_type_label=ans_type_lbl)
+# #     total_loss = output['loss']
+# #     total_loss.backward()
+# #     torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+# #     optimizer.step()
+# #     scheduler.step()
+# #     model.zero_grad()
 
 # %%
 train_dataloader = list_graphs
@@ -915,7 +955,7 @@ optimizer = AdamW(model.parameters(),
 from transformers import get_linear_schedule_with_warmup, get_cosine_with_hard_restarts_schedule_with_warmup
 
 # Number of training epochs. The BERT authors recommend between 2 and 4. 
-epochs = 2
+epochs = 3
 
 # Total number of training steps is [number of batches] x [number of epochs]. 
 # (Note that this is not the same as the number of training samples).
@@ -949,7 +989,7 @@ neptune.set_project('haritz/srl-pred')
 PARAMS = {"num_epoch": epochs, 
           'lr': lr, 
           'pretrained_weights': pretrained_weights,
-          'loss_fn': 'crossentropy_label_smoothing', 
+          'loss_fn': 'crossentropy', 
           #'validation_size': len(validation_dataloader)*val_batch_size , 
           'random_seed': random_seed,
           'total_steps': total_steps, 
@@ -1154,22 +1194,42 @@ class Validation():
                    }
         # Evaluate data for one epoch       
         num_valid_examples = 0
+        output_pred_sp = {}
+        output_predictions_ans = {}
         for step, b_graph in enumerate(tqdm(self.validation_dataloader)):
             num_valid_examples += 1
+            ans_type_lbl = get_ans_type_lbl(self.dataset[step])
             with torch.no_grad():
                 output = self.model(b_graph,
                                input_ids=self.tensor_input_ids[step].unsqueeze(0).to(device),
                                attention_mask=self.tensor_attention_masks[step].unsqueeze(0).to(device),
                                token_type_ids=self.tensor_token_type_ids[step].unsqueeze(0).to(device), 
                                start_positions=torch.tensor([self.list_span_idx[step][0]], device='cuda'),
-                               end_positions=torch.tensor([self.list_span_idx[step][1]], device='cuda'), train=False)
-                
+                               end_positions=torch.tensor([self.list_span_idx[step][1]], device='cuda'), 
+                               ans_type_label=ans_type_lbl,
+                                    train=False)
+            _id = self.dataset[step]['_id']   
             # Accumulate the validation loss.
             metrics['validation_loss'] += output['loss'].item()
             # Sentence evaluation
             sent_labels = output['sent']['lbl']
             prediction_sent = torch.argmax(output['sent']['probs'], dim=1)
             sp_em, sp_prec, sp_recall = self.update_sp_metrics(metrics, prediction_sent, sent_labels)
+            sent_num = 0
+            ## get sent titles and sents idx
+            dict_ins2dict_doc2pred = self.get_oracle_dict_ins2dict_doc2pred()
+            dict_sent_num2str = dict()
+            for doc_idx, (doc_title, doc) in enumerate(self.dataset[step]['context']):
+                if dict_ins2dict_doc2pred[step][doc_idx] == 1:
+                    for i, sent in enumerate(doc):
+                        dict_sent_num2str[sent_num] = {'sent': i, 'doc_title': doc_title}
+                        sent_num += 1
+            output_pred_sp[_id] = []
+            for i, pred in enumerate(prediction_sent):
+                if pred == 1:
+                    output_pred_sp[_id].append([dict_sent_num2str[i]['doc_title'],
+                                                dict_sent_num2str[i]['sent']])
+            
             # srl
             prediction_srl = torch.argmax(output['srl']['probs'], dim=1)
             srl_labels = output['srl']['lbl']
@@ -1179,23 +1239,31 @@ class Validation():
                 prediction_ent = torch.argmax(output['ent']['probs'], dim=1)
                 ent_labels = output['ent']['lbl']
                 self.update_ent_metrics(metrics, prediction_ent, ent_labels, output['ent']['probs'][:,1])
+            # answer type prediction
+            ans_type = torch.argmax(output['ans_type']['logits']).item()
             # answer span prediction
-            ## wh type
-            query = self.dataset[step]['question']
-            wh = self.__findWHword(query)
-            max_ans_len = wh_ans_len[wh]
             golden_ans = self.dataset[step]['answer']
             predicted_ans = ""
-            predicted_ans = self.__get_pred_ans_str(self.tensor_input_ids[step], output, max_ans_len)
+            if ans_type == 0:
+                ## wh type
+                query = self.dataset[step]['question']
+                wh = self.__findWHword(query)
+                max_ans_len = wh_ans_len[wh]
+                predicted_ans = self.__get_pred_ans_str(self.tensor_input_ids[step], output, max_ans_len)
+            elif ans_type == 1:
+                predicted_ans = 'yes'
+            elif ans_type == 2:
+                predicted_ans = 'no'
             ans_em, ans_prec, ans_recall = self.update_answer_metrics(metrics, predicted_ans, golden_ans)
             # joint
             self.update_joint_metrics(metrics, ans_em, ans_prec, ans_recall, sp_em, sp_prec, sp_recall)                
-            
+            output_predictions_ans[_id] = predicted_ans
         #N = len(self.validation_dataloader)
         N = num_valid_examples
         for k in metrics.keys():
             metrics[k] /= N
-        return metrics
+        pred_json = {'answer': output_predictions_ans, 'sp': output_pred_sp}
+        return metrics, pred_json
     
     def get_answer_predictions(self, dict_ins2dict_doc2pred):
         output_pred_sp = {}
@@ -1204,25 +1272,37 @@ class Validation():
         output_srl = {}
         for step, b_graph in enumerate(tqdm(self.validation_dataloader)): 
             with torch.no_grad():
+                ans_type_lbl = get_ans_type_lbl(self.dataset[step])
                 output = self.model(b_graph,
                                input_ids=self.tensor_input_ids[step].unsqueeze(0).to(device),
                                attention_mask=self.tensor_attention_masks[step].unsqueeze(0).to(device),
                                token_type_ids=self.tensor_token_type_ids[step].unsqueeze(0).to(device), 
-                               train=False)
+                               start_positions=torch.tensor([self.list_span_idx[step][0]], device='cuda'),
+                               end_positions=torch.tensor([self.list_span_idx[step][1]], device='cuda'), 
+                               ans_type_label=ans_type_lbl,
+                                train=False)
             _id = self.dataset[step]['_id']
-            query = self.dataset[step]['question']
-            wh = self.__findWHword(query)
-            max_ans_len = wh_ans_len[wh]
-            #answer
+            ans_type = torch.argmax(output['ans_type']['logits']).item()
+            # answer span prediction
+            golden_ans = self.dataset[step]['answer']
             predicted_ans = ""
-            predicted_ans = self.__get_pred_ans_str(self.tensor_input_ids[step], output, max_ans_len)
+            if ans_type == 0:
+                ## wh type
+                query = self.dataset[step]['question']
+                wh = self.__findWHword(query)
+                max_ans_len = wh_ans_len[wh]
+                predicted_ans = self.__get_pred_ans_str(self.tensor_input_ids[step], output, max_ans_len)
+            elif ans_type == 1:
+                predicted_ans = 'yes'
+            elif ans_type == 2:
+                predicted_ans = 'no'
             output_predictions_ans[_id] = predicted_ans
             # ent
-            ent = self.__get_ent_str(b_graph, self.tensor_input_ids[step], output)
-            output_ent[_id] = ent
-            # srl
-            srl = self.__get_srl_str(b_graph, self.tensor_input_ids[step], output)
-            output_srl[_id] = srl
+#             ent = self.__get_ent_str(b_graph, self.tensor_input_ids[step], output)
+#             output_ent[_id] = ent
+#             # srl
+#             srl = self.__get_srl_str(b_graph, self.tensor_input_ids[step], output)
+#             output_srl[_id] = srl
             #sp
 #             prediction_sent = torch.argmax(output['sent']['probs'], dim=1)
 #             sent_num = 0
@@ -1239,6 +1319,19 @@ class Validation():
 #                                                 dict_sent_num2str[i]['sent']])
         return {'answer': output_predictions_ans, 'sp': output_pred_sp,
                 'ent': output_ent, 'srl': output_srl}
+    
+    def get_oracle_dict_ins2dict_doc2pred(self):
+        dict_ins2dict_doc2pred = dict()
+        for ins_idx, ins in enumerate(hotpot_dev):
+            set_golden_docs = set([title for title, _ in ins['supporting_facts']])
+            dict_doc2pred = dict()
+            for doc_idx, (title, doc) in enumerate(ins['context']):
+                if title in set_golden_docs:
+                    dict_doc2pred[doc_idx] = 1
+                else:
+                    dict_doc2pred[doc_idx] = 0
+            dict_ins2dict_doc2pred[ins_idx] = dict_doc2pred
+        return dict_ins2dict_doc2pred
     
     def __get_pred_ans_str(self, input_ids, output, max_ans_len):
         st, end = self.__get_st_end_span_idx(output['span']['start_logits'].squeeze(),
@@ -1378,10 +1471,65 @@ class Validation():
         metrics['joint_prec'] += joint_prec
         metrics['joint_recall'] += joint_recall
 
+# %%
+dict_ins2dict_doc2pred = dict()
+for ins_idx, ins in enumerate(hotpot_dev):
+    set_golden_docs = set([title for title, _ in ins['supporting_facts']])
+    dict_doc2pred = dict()
+    for doc_idx, (title, doc) in enumerate(ins['context']):
+        if title in set_golden_docs:
+            dict_doc2pred[doc_idx] = 1
+        else:
+            dict_doc2pred[doc_idx] = 0
+    dict_ins2dict_doc2pred[ins_idx] = dict_doc2pred
 
 # %%
-# model = HGNModel.from_pretrained('/workspace/ml-workspace/thesis_git/HSGN/models')
+# model = HGNModel.from_pretrained('../../models/ans_type_pred_3_epochs')
 # model.cuda()
+
+# %%
+validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
+                        dev_tensor_input_ids, dev_tensor_attention_masks, 
+                        dev_tensor_token_type_ids,
+                        dev_list_span_idx)
+metrics, pred_json_oracle = validation.do_validation()
+
+# %%
+metrics
+
+# %%
+with open('../../preds_ans_type_pred_3_epochs_oracle.json', 'w+') as f:
+    json.dump(pred_json_oracle, f)
+
+# %%
+# # %%
+
+
+# # %%
+
+
+# # %%
+# list(preds['answer'].items())[:50]
+
+# # %%
+
+
+# # %%
+# validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
+#                         dev_tensor_input_ids, dev_tensor_attention_masks, 
+#                         dev_tensor_token_type_ids,
+#                         dev_list_span_idx)
+# metrics = validation.do_validation()
+
+# # %%
+# metrics
+
+# %%
+# validation = Validation(model, hotpot_dev, dev_list_graphs[:10], tokenizer,
+#                         dev_tensor_input_ids, dev_tensor_attention_masks, 
+#                         dev_tensor_token_type_ids,
+#                         dev_list_span_idx)
+# metrics = validation.do_validation()
 
 # %%
 # validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
@@ -1415,13 +1563,13 @@ def record_eval_metric(neptune, metrics):
 
 
 # %%
-model_path = 'models'
+model_path = 'models/ans_type_pred_3_epochs'
 
 best_eval_em = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="full base 2-layer gelu span pred + regularization query edges", params=PARAMS, upload_source_files=['GAT_Hierar_Tok_Node_Aggr.py']):
-    neptune.set_property('server', 'IRGPU11')
+with neptune.create_experiment(name="561 3 epochs", params=PARAMS, upload_source_files=['src/models/GAT_Hierar_Tok_Node_Aggr.py']):
+    neptune.set_property('server', 'nipa')
     neptune.set_property('training_set_path', training_path)
     neptune.set_property('dev_set_path', dev_path)
 
@@ -1433,7 +1581,6 @@ with neptune.create_experiment(name="full base 2-layer gelu span pred + regulari
         # ========================================
         
         # Perform one full pass over the training set.
-
         print("")
         print('======== Epoch {:} / {:} ========'.format(epoch_i + 1, epochs))
         print('Training...')
@@ -1457,12 +1604,14 @@ with neptune.create_experiment(name="full base 2-layer gelu span pred + regulari
             token_type_ids=tensor_token_type_ids[idx].unsqueeze(0).to(device) 
             start_positions=torch.tensor([list_span_idx[idx][0]], device='cuda')
             end_positions=torch.tensor([list_span_idx[idx][1]], device='cuda')
+            ans_type_lbl = get_ans_type_lbl(hotpot_train[idx])
             output = model(b_graph,
                            input_ids=input_ids,
                            attention_mask=attention_mask,
                            token_type_ids=token_type_ids, 
                            start_positions=start_positions,
-                           end_positions=end_positions)
+                           end_positions=end_positions,
+                           ans_type_label=ans_type_lbl)
             
             total_loss = output['loss'] / dict_params['accumulation_steps']
             assert not torch.isnan(total_loss)
@@ -1470,6 +1619,7 @@ with neptune.create_experiment(name="full base 2-layer gelu span pred + regulari
             ent_loss = output['ent']['loss']
             srl_loss = output['srl']['loss']
             span_loss = output['span']['loss']
+            ans_type_loss = output['ans_type']['loss']
             # neptune
             neptune.log_metric("total_loss", total_loss.detach().item())
             if sent_loss is not None:
@@ -1480,6 +1630,8 @@ with neptune.create_experiment(name="full base 2-layer gelu span pred + regulari
                 neptune.log_metric("ent_loss", ent_loss.detach().item())
             if span_loss is not None:
                 neptune.log_metric("span_loss", span_loss.detach().item())
+            if ans_type_loss is not None:
+                neptune.log_metric("ans_type_loss", ans_type_loss.detach().item())
 
             # backpropagation
             total_loss.backward()
@@ -1489,22 +1641,22 @@ with neptune.create_experiment(name="full base 2-layer gelu span pred + regulari
                 scheduler.step()
                 model.zero_grad()
                 
-                if (step +1) % 10000 == 0:
-                    #############################
-                    ######### Validation ########
-                    #############################
-                    validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
-                                            dev_tensor_input_ids, dev_tensor_attention_masks, 
-                                            dev_tensor_token_type_ids,
-                                            dev_list_span_idx)
-                    metrics = validation.do_validation()
-                    model.train()
-                    record_eval_metric(neptune, metrics)
+                # if (step +1) % 10000 == 0:
+                #     #############################
+                #     ######### Validation ########
+                #     #############################
+                #     validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
+                #                             dev_tensor_input_ids, dev_tensor_attention_masks, 
+                #                             dev_tensor_token_type_ids,
+                #                             dev_list_span_idx)
+                #     metrics = validation.do_validation()
+                #     model.train()
+                #     record_eval_metric(neptune, metrics)
 
-                    curr_em = metrics['ans_em']
-                    if  curr_em > best_eval_em:
-                        best_eval_em = curr_em
-                        model.save_pretrained(model_path) 
+                #     curr_em = metrics['ans_em']
+                #     if  curr_em > best_eval_em:
+                #         best_eval_em = curr_em
+                #         model.save_pretrained(model_path) 
             total_train_loss += total_loss.detach().item()
 
             # free-up gpu memory

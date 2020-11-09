@@ -75,6 +75,8 @@ class LabelSmoothingLoss(nn.Module):
 # %%
 loss_fn = LabelSmoothingLoss()
 
+loss_fn = nn.CrossEntropyLoss()
+# %%
 class NodeNorm(nn.Module):
     def __init__(self, unbiased=False, eps=1e-5):
         super(NodeNorm, self).__init__()
@@ -245,8 +247,6 @@ class HeteroRGCNLayer(nn.Module):
                 pass
             elif "ent2ent_rel" == etype:
                 funcs[etype] = ((lambda e: self.message_func_rel(bert_token_emb, e)) , self.reduce_func)
-            elif "sent2at" == etype:
-                funcs[etype] = (self.message_func_AT_node, self.reduce_func)
             else:
                 funcs[etype] = (self.message_func_regular_node, self.reduce_func)
         G.multi_update_all(funcs, 'sum')
@@ -397,8 +397,17 @@ class HGNModel(BertPreTrainedModel):
         
         # span prediction
         self.num_labels = config.num_labels
-        self.qa_outputs = nn.Sequential(nn.Linear(config.hidden_size, config.hidden_size), GeLU(), nn.Dropout(dict_params['span_drop']),
+        self.qa_outputs = nn.Sequential(nn.Linear(config.hidden_size, config.hidden_size),
+                                        GeLU(),
+                                        nn.Dropout(dict_params['span_drop']),
                                         nn.Linear(config.hidden_size, 2))
+        
+        # Answer Type
+        self.sfm = nn.Softmax(-1)
+        self.answer_type_classifier = nn.Sequential(nn.Linear(config.hidden_size, config.hidden_size), 
+                                                    GeLU(),
+                                                    nn.Dropout(dict_params['span_drop']),
+                                                    nn.Linear(config.hidden_size, 3)) 
         # init weights
         self.init_weights()
         # params
@@ -419,7 +428,8 @@ class HGNModel(BertPreTrainedModel):
         inputs_embeds=None,
         start_positions=None,
         end_positions=None,
-        train=True
+        train=True,
+        ans_type_label=None
     ):
         outputs = self.bert(
             input_ids,
@@ -434,15 +444,25 @@ class HGNModel(BertPreTrainedModel):
         # Graph forward & node classification
         graph_out, graph_emb = self.graph_forward(graph, sequence_output, train)
         sequence_output = graph_emb['tok'].unsqueeze(0)
-        # span prediction
+         # answer type logits
+        ans_type_logits = self.answer_type_classifier(self.attention(graph_out['sent']['emb'].view(1,-1,dict_params['out_feats']),
+                                                                     graph_out['sent']['logits'][:,1].view(1,-1,1))
+                                                      ).squeeze(1)
         span_loss = None
         start_logits = None
         end_logits = None
-        span_loss, start_logits, end_logits = self.span_prediction(sequence_output, start_positions, end_positions)
-        assert not torch.isnan(start_logits).any()
-        assert not torch.isnan(end_logits).any()  
+        if (train and ans_type_label == 0) or (not train):
+            # span prediction    
+            span_loss, start_logits, end_logits = self.span_prediction(sequence_output, start_positions, end_positions)
+            assert not torch.isnan(start_logits).any()
+            assert not torch.isnan(end_logits).any()
+        
         # loss
-        final_loss = 0.0
+        final_loss = 0
+        loss_ans_type = None
+        if ans_type_label is not None:
+            loss_ans_type = loss_fn_ans_type(ans_type_logits, ans_type_label)
+            final_loss = self.weight_ans_type_loss + loss_ans_type
         if span_loss is not None:
             final_loss += self.weight_span_loss*span_loss
         if graph_out['sent']['loss'] is not None:
@@ -451,13 +471,21 @@ class HGNModel(BertPreTrainedModel):
             final_loss += self.weight_srl_loss*graph_out['srl']['loss']
         if graph_out['ent']['loss'] is not None:
             final_loss += self.weight_ent_loss*graph_out['ent']['loss']
-     
+       
         return {'loss': final_loss, 
                 'sent': graph_out['sent'], 
                 'ent': graph_out['ent'],
                 'srl': graph_out['srl'],
+                'ans_type': {'loss': loss_ans_type, 'logits': ans_type_logits},
                 'span': {'loss': span_loss, 'start_logits': start_logits, 'end_logits': end_logits}}  
     
+    def attention(self, x, z):
+        # x: batch_size X max_nodes X feat_dim
+        # z: attention logits
+        att = nn.functional.softmax(z, dim=1) # batch_size X max_nodes X 1
+        output = torch.bmm(att.transpose(1,2), x)
+        return output
+
     def graph_forward(self, graph, bert_context_emb, train):
         # create graph initial embedding #
         graph_emb = self.graph_initial_embedding(graph, bert_context_emb)
@@ -477,10 +505,12 @@ class HGNModel(BertPreTrainedModel):
         # classify nodes #
         sent_labels = None
         ent_labels = None
+        sent_emb = None
         if train:
             sample_sent_nodes = self.sample_sent_nodes(graph)
             sample_srl_nodes = self.sample_srl_nodes(graph)
             sample_ent_nodes = self.sample_ent_nodes(graph)
+            sent_emb = graph_emb['sent'][sample_sent_nodes]
             # add skip-connection
             logits_sent = self.sent_classifier(torch.cat((graph_emb['sent'][sample_sent_nodes],
                                                           initial_graph_emb['sent'][sample_sent_nodes]), dim=1))
@@ -514,6 +544,7 @@ class HGNModel(BertPreTrainedModel):
             
             
         else:
+            sent_emb = graph_emb['sent']
             # add skip-connection
             logits_sent = self.sent_classifier(torch.cat((graph_emb['sent'],
                                                           initial_graph_emb['sent']), dim=1))
@@ -573,7 +604,8 @@ class HGNModel(BertPreTrainedModel):
         if ent_labels is not None:
             ent_labels = ent_labels.cpu().view(-1)
 
-        return ({'sent': {'loss': loss_sent, 'probs': probs_sent, 'lbl': sent_labels},
+        return ({'sent': {'loss': loss_sent, 'probs': probs_sent, 'logits': logits_sent, 
+                          'emb': sent_emb, 'lbl': sent_labels},
                 'srl': {'loss': loss_srl, 'probs': probs_srl, 'lbl': srl_labels},
                 'ent': {'loss': loss_ent, 'probs': probs_ent, 'lbl': ent_labels},
                 },
@@ -765,8 +797,19 @@ class Validation():
             wh = self.__findWHword(query)
             max_ans_len = wh_ans_len[wh]
             golden_ans = self.dataset[step]['answer']
+            ans_type = torch.argmax(output['ans_type']['logits']).item()
+            # answer span prediction
             predicted_ans = ""
-            predicted_ans = self.__get_pred_ans_str(self.tensor_input_ids[step], output, max_ans_len)
+            if ans_type == 0:
+                ## wh type
+                query = self.dataset[step]['question']
+                wh = self.__findWHword(query)
+                max_ans_len = wh_ans_len[wh]
+                predicted_ans = self.__get_pred_ans_str(self.tensor_input_ids[step], output, max_ans_len)
+            elif ans_type == 1:
+                predicted_ans = 'yes'
+            elif ans_type == 2:
+                predicted_ans = 'no'
             ans_em, ans_prec, ans_recall = self.update_answer_metrics(metrics, predicted_ans, golden_ans)
             # joint
             self.update_joint_metrics(metrics, ans_em, ans_prec, ans_recall, sp_em, sp_prec, sp_recall)                
@@ -788,12 +831,20 @@ class Validation():
                                token_type_ids=self.tensor_token_type_ids[step].unsqueeze(0).to(device), 
                                train=False)
             _id = self.dataset[step]['_id']
-            query = self.dataset[step]['question']
-            wh = self.__findWHword(query)
-            max_ans_len = wh_ans_len[wh]
-            #answer
+            # answer
+            ans_type = torch.argmax(output['ans_type']['logits']).item()
+            # answer span prediction
             predicted_ans = ""
-            predicted_ans = self.__get_pred_ans_str(self.tensor_input_ids[step], output, max_ans_len)
+            if ans_type == 0:
+                ## wh type
+                query = self.dataset[step]['question']
+                wh = self.__findWHword(query)
+                max_ans_len = wh_ans_len[wh]
+                predicted_ans = self.__get_pred_ans_str(self.tensor_input_ids[step], output, max_ans_len)
+            elif ans_type == 1:
+                predicted_ans = 'yes'
+            elif ans_type == 2:
+                predicted_ans = 'no'
             output_predictions_ans[_id] = predicted_ans
             #sp
             prediction_sent = torch.argmax(output['sent']['probs'], dim=1)
