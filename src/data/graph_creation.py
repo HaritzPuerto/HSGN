@@ -763,13 +763,13 @@ class Dataset():
                                                                              list_srl2ent, 
                                                                              list_srl_rel)
         dict_edges = {
-                     ('sent', 'sent2doc', 'doc'): list_sent2doc,  # lbl: [SENT2DOC]
+                    #  ('sent', 'sent2doc', 'doc'): list_sent2doc,  # lbl: [SENT2DOC]
                      ('srl', 'srl2sent', 'sent'): list_srl2sent,  # lbl: [SRL2SENT]
                      # to token
                      ('srl', 'srl2tok', 'tok'): list_srl2tok,     # lbl: [SRL2TOK]
                      # end hierarchical
                      # same-level edges
-                     ('doc', 'doc2doc_self', 'doc'): list_doc2doc,         # lbl: [DOC2DOC_SELF]
+                    #  ('doc', 'doc2doc_self', 'doc'): list_doc2doc,         # lbl: [DOC2DOC_SELF]
                      ('sent', 'sent2sent', 'sent'): list_sent2sent,   # lbl: [SENT2SENT]
                      ('srl', 'srl2srl', 'srl'): list_srl2srl,         # lbl: [SRL2SRL]
                      ('srl', 'srl2self', 'srl'): list_srl2self,         # lbl: [SRL2SELF]
@@ -804,9 +804,9 @@ class Dataset():
             dict_edges['query', 'query2srl_pred', 'sent'] = list_query2sent_pred
         graph = dgl.heterograph(dict_edges)
         # doc metadata
-        graph.nodes['doc'].data['st_end_idx'] =  torch.tensor(list_doc_st_end_idx)
-#         graph.nodes['doc']['list_context_idx'] = torch.tensor(list_doc_context_idx).reshape(-1,1)
-        graph.nodes['doc'].data['labels'] = torch.tensor(list_doc_lbl).view(-1,1)
+#         graph.nodes['doc'].data['st_end_idx'] =  torch.tensor(list_doc_st_end_idx)
+# #         graph.nodes['doc']['list_context_idx'] = torch.tensor(list_doc_context_idx).reshape(-1,1)
+#         graph.nodes['doc'].data['labels'] = torch.tensor(list_doc_lbl).view(-1,1)
         # sent metadata
         graph.nodes['sent'].data['st_end_idx'] =  torch.tensor(list_sent_st_end_idx)
 #         graph.nodes['sent']['list_context_idx'] = torch.tensor(list_sent_context_idx).reshape(-1,1)
