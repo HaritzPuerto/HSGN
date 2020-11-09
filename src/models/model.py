@@ -555,10 +555,10 @@ class HGNModel(BertPreTrainedModel):
             probs_ent = F.softmax(logits_ent, dim=1).cpu()
             # shape [num_ent_nodes, 2]
 
-        return ({'sent': {'loss': loss_sent, 'probs': probs_sent, 'logits': logits_sent, 
+        return ({'sent': {'loss': 0, 'probs': probs_sent, 'logits': logits_sent, 
                           'emb': sent_emb},
-                'srl': {'loss': loss_srl, 'probs': probs_srl},
-                'ent': {'loss': loss_ent, 'probs': probs_ent},
+                'srl': {'loss': 0, 'probs': probs_srl},
+                'ent': {'loss': 0, 'probs': probs_ent},
                 },
                 graph_emb)
     
