@@ -769,7 +769,6 @@ class Dataset():
         graph = dgl.heterograph(dict_edges)
         # sent metadata
         graph.nodes['sent'].data['st_end_idx'] =  torch.tensor(list_sent_st_end_idx)
-        graph.nodes['sent'].data['labels'] = torch.tensor(list_sent_lbl).view(-1,1)
         # srl metadata
         graph.nodes['srl'].data['st_end_idx'] =  torch.tensor(list_srl_st_end_idx)
         # srl_loc metadata
