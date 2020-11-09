@@ -81,6 +81,10 @@ target/
 *.json
 *.bin
 *.zip
+SAE/models/*.txt
+SAE/models/doc_filter/*.txt
+SAE/models/bert-large-uncased-whole-word-masking/*.txt
+
 
 # Mac OS-specific storage files
 .DS_Store
