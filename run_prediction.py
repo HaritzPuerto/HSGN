@@ -37,9 +37,6 @@ hotpotqa_path = 'external/'
 input_file = os.path.join(data_path, hotpotqa_path, "input.json")
 with open(input_file, "r") as f:
     hotpot = json.load(f)
-hotpot = hotpot[:10]
-with open("input_sample.json", 'w+') as f:
-    json.dump(hotpot, f)
 
 dict_ins2dict_doc2pred = convert_sae_doc_ret_output2our_input(hotpot)
 print("Creating graphs for the predicted relevant documents")
