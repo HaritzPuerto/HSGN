@@ -237,6 +237,70 @@ class Dataset():
                  'attention_mask': context_attention_mask,
                  'token_type_ids': context_token_type_ids}, dict_idx)
 
+    def create_context(self, encoding: dict, query_idx: int, dict_doc_metadata: dict):
+        '''
+        Inputs:
+            - encoding: dict_keys(['input_ids', 'token_type_ids', 'attention_mask'])
+            - query_idx: indexes of the queries in encoding
+            - list_list_sent_idx: list of list of idx (in encoding) of setences. The first dimension represents docs.
+                eg: [[70, 71, 72], [73, 74, 75, 76]], so 2 docs (3 sents, 4 sents)
+        Return:
+            - context: input_ids of question and list of documents (with special tokens)
+            - dict_idx: dict with the idx of the query, doc, and sentences
+                eg: {'q': (1, 21),
+                     'list_docs': [{'idx_doc': (22, 136),
+                       'idx_sent': [(22, 41), (42, 89), (90, 136)]},
+                      {'idx_doc': (137, 275),
+                       'idx_sent': [(137, 182), (183, 220), (221, 235), (236, 275)]}]}
+        '''
+        context_input_ids = []
+        context_token_type_ids = []
+        context_attention_mask = []
+        context_input_ids.append(101) # CLS
+        q_start = len(context_input_ids)
+        context_input_ids.extend(encoding['input_ids'][query_idx]) # QUERY
+        q_end = len(context_input_ids)
+        context_input_ids.append(102) # SEP (between query and sentences)
+        # question tokens token type = 0
+        context_token_type_ids = [0] * len(context_input_ids)
+        dict_idx = {"q_token_st_end_idx": (q_start, q_end)}
+        list_docs = []
+        for list_sent_encoding_idx in dict_doc_metadata['list_list_sent_encoding_idx']:
+            list_sent = []
+            for sent_encoding_idx in list_sent_encoding_idx:
+                s_start = len(context_input_ids)
+                context_input_ids.extend(encoding['input_ids'][sent_encoding_idx])
+                s_end = len(context_input_ids)
+                list_sent.append((s_start, s_end))
+                if s_end > self.max_len - 1:
+                    s_end = self.max_len - 1
+                    break
+            
+            dict_docs = {"doc_token_st_end_idx":(list_sent[0][0], list_sent[-1][-1]),
+                         "list_sent_token_st_end_idx": list_sent
+                        }
+            list_docs.append(dict_docs)
+            if s_end == self.max_len - 1:
+                break
+        dict_idx["list_docs_encoding_metadata"] = list_docs
+        dict_idx['list_golden_doc_idx'] = dict_doc_metadata['list_golden_doc_idx']
+        context_input_ids.append(102) # SEP (last one)
+        # attention 1 to all valid tokens
+        context_attention_mask = [1] * len(context_input_ids)
+        # token type 1 to evid doc
+        context_token_type_ids.extend([1] * (len(context_input_ids)-len(context_token_type_ids)))
+        if len(context_input_ids) < self.max_len:
+            context_input_ids.extend([0]*(self.max_len-len(context_input_ids))) # 0 = [PAD]
+            context_attention_mask.extend([0] * (self.max_len-len(context_attention_mask)))
+            context_token_type_ids.extend([0] * (self.max_len-len(context_token_type_ids)))
+        else:
+            context_input_ids = context_input_ids[:self.max_len]
+            context_attention_mask = context_attention_mask[:self.max_len]
+            context_token_type_ids = context_token_type_ids[:self.max_len]
+        return ({'input_ids': context_input_ids,
+                 'attention_mask': context_attention_mask,
+                 'token_type_ids': context_token_type_ids}, dict_idx)
+
     def create_graph(self, hotpot_instance, list_entities, dict_idx, context, ins_idx):
         node_idx = 0
         # Edges #
@@ -251,6 +315,8 @@ class Dataset():
         list_ent2srl = []
         list_srl2query = []
         list_query2srl = []
+        list_query2ent = []
+        list_query2sent = []
         ### to tokens
         list_doc2tok = []
         list_tok2doc = []
@@ -568,7 +634,10 @@ class Dataset():
 #         # fully connected doc nodes    
 #         list_doc2doc.extend([(u, v) for u in list_doc_nodes for v in list_doc_nodes if u != v])
 #         list_doc2doc.extend([(v, u) for u in list_doc_nodes for v in list_doc_nodes if u != v])
-        
+        if sent_node_idx > 0:
+            list_query2sent = [(0, s) for s in range(sent_node_idx)] # lbl: [QUERY2SENT]
+        if ent_node_idx > 0:
+            list_query2ent = [(0, e) for e in range(ent_node_idx)]  # lbl: [QUERY2ENT]
         ############ Query node ################
         (q_st, q_end) = dict_idx['q_token_st_end_idx']
         list_query_st_end_idx = [(q_st, q_end)]
@@ -762,14 +831,15 @@ class Dataset():
         list_ent2ent_rel, list_ent2ent_metadata = self.compute_ent_relations(list_srl2srl, 
                                                                              list_srl2ent, 
                                                                              list_srl_rel)
+        
         dict_edges = {
-                     ('sent', 'sent2doc', 'doc'): list_sent2doc,  # lbl: [SENT2DOC]
+                     #('sent', 'sent2doc', 'doc'): list_sent2doc,  # lbl: [SENT2DOC]
                      ('srl', 'srl2sent', 'sent'): list_srl2sent,  # lbl: [SRL2SENT]
                      # to token
                      ('srl', 'srl2tok', 'tok'): list_srl2tok,     # lbl: [SRL2TOK]
                      # end hierarchical
                      # same-level edges
-                     ('doc', 'doc2doc_self', 'doc'): list_doc2doc,         # lbl: [DOC2DOC_SELF]
+                     #('doc', 'doc2doc_self', 'doc'): list_doc2doc,         # lbl: [DOC2DOC_SELF]
                      ('sent', 'sent2sent', 'sent'): list_sent2sent,   # lbl: [SENT2SENT]
                      ('srl', 'srl2srl', 'srl'): list_srl2srl,         # lbl: [SRL2SRL]
                      ('srl', 'srl2self', 'srl'): list_srl2self,         # lbl: [SRL2SELF]
@@ -778,6 +848,12 @@ class Dataset():
                      ('srl', 'srl_multihop', 'srl'): list_srl_multihop,
                      ('sent', 'sent_multihop', 'sent'): list_sent_multihop,
                     }
+        if list_query2sent != []:
+            dict_edges[('query', 'query2sent', 'sent')] = list_query2sent
+        if list_query2srl != []:
+            dict_edges[('query', 'query2srl', 'srl')] =  list_query2srl
+        if list_query2ent != []:
+            dict_edges[('query', 'query2ent', 'ent')] = list_query2ent
         if list_ent2srl != []:
             dict_edges[('ent', 'ent2srl', 'srl')] = list_ent2srl     # lbl: [ENT2SRL]
         if list_ent2tok != []:
@@ -801,24 +877,19 @@ class Dataset():
         if list_q_srl2srl != []:
             dict_edges[('srl', 'query_srl2srl', 'srl')] = list_q_srl2srl
         if list_query2sent_pred != []:
-            dict_edges['query', 'query2srl_pred', 'sent'] = list_query2sent_pred
+            dict_edges['query', 'query2sent_pred', 'sent'] = list_query2sent_pred
         graph = dgl.heterograph(dict_edges)
         # doc metadata
-        graph.nodes['doc'].data['st_end_idx'] =  torch.tensor(list_doc_st_end_idx)
-#         graph.nodes['doc']['list_context_idx'] = torch.tensor(list_doc_context_idx).reshape(-1,1)
-        graph.nodes['doc'].data['labels'] = torch.tensor(list_doc_lbl).view(-1,1)
+        
         # sent metadata
         graph.nodes['sent'].data['st_end_idx'] =  torch.tensor(list_sent_st_end_idx)
-#         graph.nodes['sent']['list_context_idx'] = torch.tensor(list_sent_context_idx).reshape(-1,1)
         graph.nodes['sent'].data['labels'] = torch.tensor(list_sent_lbl).view(-1,1)
         # srl metadata
         graph.nodes['srl'].data['st_end_idx'] =  torch.tensor(list_srl_st_end_idx)
-#         graph.nodes['srl']['list_context_idx'] = torch.tensor(list_srl_context_idx).reshape(-1,1)
         graph.nodes['srl'].data['labels'] = torch.tensor(list_srl_lbl).view(-1,1)
         # srl_loc metadata
         if list_srl_loc2srl != []:
             graph.nodes['srl_loc'].data['st_end_idx'] =  torch.tensor(list_srl_loc_st_end_idx)
-#             graph.nodes['srl_loc']['list_context_idx'] = torch.tensor(list_srl_loc_context_idx).reshape(-1,1)
         # srl_tmp metadata
         if list_srl_tmp2srl != []:
             graph.nodes['srl_tmp'].data['st_end_idx'] =  torch.tensor(list_srl_tmp_st_end_idx)
@@ -826,7 +897,6 @@ class Dataset():
         # ent metadata
         if list_ent_lbl != []:
             graph.nodes['ent'].data['st_end_idx'] =  torch.tensor(list_ent_st_end_idx)
-    #         graph.nodes['ent']['list_context_idx'] = torch.tensor(list_ent_context_idx).reshape(-1,1)
             graph.nodes['ent'].data['labels'] = torch.tensor(list_ent_lbl).view(-1,1)
         # token metadata
         graph.nodes['tok'].data['st_end_idx'] =  torch.tensor(list_token_st_end_idx)
