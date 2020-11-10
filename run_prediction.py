@@ -10,7 +10,7 @@ def convert_sae_doc_ret_output2our_input(hotpot):
     with open('SAE/output/pred_gold_idx.json', 'r') as f:
         pred_gold_idx = json.load(f)
     out = dict()
-    for ins_idx, pred in enumerate(pred_gold_idx[:10]):
+    for ins_idx, pred in enumerate(pred_gold_idx):
         dict_doc2pred = dict()
         if len(hotpot[ins_idx]['context']) == 2:
             dict_doc2pred = {0: 1, 1: 1}
