@@ -24,7 +24,7 @@ torch.manual_seed(random_seed)
 torch.cuda.manual_seed_all(random_seed)
 # %%
 device = 'cuda'
-pretrained_weights = 'bert-base-cased'
+pretrained_weights = 'bert-base-uncased'
 #pretrained_weights = 'albert-xxlarge-v2'
 data_path = 'data/'
 hotpotqa_path = 'external/'
@@ -102,7 +102,7 @@ class Dataset():
             self.tokenizer = AlbertTokenizer.from_pretrained(pretrained_weights,
                                                        do_basic_tokenize=False,
                                                        clean_text=False)
-        elif pretrained_weights == 'bert-base-cased':
+        elif 'bert' in pretrained_weights:
             self.tokenizer = BertTokenizer.from_pretrained(pretrained_weights,
                                                        do_basic_tokenize=False,
                                                        clean_text=False)
@@ -812,6 +812,7 @@ class Dataset():
                      # multi-hop edges
                      ('srl', 'srl_multihop', 'srl'): list_srl_multihop,
                      ('sent', 'sent_multihop', 'sent'): list_sent_multihop,
+                     ('query', 'query2self', 'query'): [(0,0)]
                     }
         if list_query2sent != []:
             dict_edges[('query', 'query2sent', 'sent')] = list_query2sent
@@ -831,8 +832,10 @@ class Dataset():
             dict_edges[('ent', 'ent_multihop', 'ent')] = list_ent_multihop # lbl: [ENT2ENT_MH]
         if list_srl_loc2srl != []:
             dict_edges[('srl_loc', 'srl_loc2srl', 'srl')] = list_srl_loc2srl  # lbl: [SRL_LOC2SRL]
+            dict_edges[('srl_loc', 'srl_loc2self', 'srl_loc')] =  [(u,u) for u in range(srl_loc_node_idx)] # lbl: [SRL_LOC2SELF]
         if list_srl_tmp2srl != []:
             dict_edges[('srl_tmp', 'srl_tmp2srl', 'srl')] = list_srl_tmp2srl  # lbl: [SRL_TMP2SRL]
+            dict_edges[('srl_tmp', 'srl_tmp2self', 'srl_tmp')] =  [(u,u) for u in range(srl_tmp_node_idx)] # lbl: [SRL_TMP2SELF]
         if list_sent2query_multihop != []:
             dict_edges[('sent', 'sent2query_multihop', 'query')] = list_sent2query_multihop
         if list_query2sent_multihop != []:
@@ -1168,7 +1171,7 @@ for g_idx, list_dict_edge in enumerate(list_list_ent2ent_metadata):
         list_graphs[g_idx].edges['ent2ent_rel'].data['rel_type'] = torch.tensor([edge['rel_type'] for edge in list_dict_edge])
         list_graphs[g_idx].edges['ent2ent_rel'].data['span_idx'] = torch.tensor([edge['span_idx'] for edge in list_dict_edge])
 # %%
-training_path = os.path.join(data_path, 'processed/training/heterog_20201106_query_edges_v2')
+training_path = os.path.join(data_path, 'processed/training/heterog_20201110_query_edges_v3_uncased')
 training_graph_path = os.path.join(training_path, 'graphs')
 training_metadata_path = os.path.join(training_path, 'metadata')
 
@@ -1247,7 +1250,7 @@ tensor_token_type_ids = torch.tensor(list_token_type_ids)
 tensor_attention_masks = torch.tensor(list_attention_masks)
 
 # %%
-dev_path = os.path.join(data_path, 'processed/dev/heterog_20201106_query_edges_v2')
+dev_path = os.path.join(data_path, 'processed/dev/heterog_20201110_query_edges_v3_uncased')
 dev_graph_path = os.path.join(dev_path, 'graphs')
 dev_metadata_path = os.path.join(dev_path, 'metadata')
 
