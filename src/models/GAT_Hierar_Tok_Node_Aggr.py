@@ -446,8 +446,8 @@ class HeteroRGCN(nn.Module):
         self.in_size = in_size
         self.residual = residual
         self.node_norm = NodeNorm()
-        self.layer1 = MultiHeadGATLayer(in_size, hidden_size, feat_drop, attn_drop)
-        self.layer2 = HeteroRGCNLayer(hidden_size * 2, out_size, feat_drop, attn_drop)
+        self.layer1 = HeteroRGCNLayer(in_size, hidden_size, feat_drop, attn_drop)
+        self.layer2 = HeteroRGCNLayer(hidden_size, out_size, feat_drop, attn_drop)
         #self.gru_layer_lvl = nn.GRU(in_size, out_size)
         
 #         self.init_params()
