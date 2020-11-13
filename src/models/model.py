@@ -36,8 +36,8 @@ np.random.seed(random_seed)
 torch.manual_seed(random_seed)
 torch.cuda.manual_seed_all(random_seed)
 
-#pretrained_weights = 'bert-base-cased'
-pretrained_weights = 'bert-large-cased-whole-word-masking'
+pretrained_weights = 'bert-base-cased'
+#pretrained_weights = 'bert-large-cased-whole-word-masking'
 device = 'cuda'
 
 weights = torch.tensor([1., 30.9, 31.], device=device)
@@ -376,7 +376,7 @@ class HGNModel(BertPreTrainedModel):
         
         # span prediction
         self.num_labels = config.num_labels
-        self.qa_outputs = nn.Sequential(nn.Linear(config.hidden_size, config.hidden_size),
+        self.qa_outputs = nn.Sequential(nn.Linear(2*config.hidden_size, config.hidden_size),
                                         GeLU(),
                                         nn.Dropout(dict_params['span_drop']),
                                         nn.Linear(config.hidden_size, 2))
@@ -423,6 +423,7 @@ class HGNModel(BertPreTrainedModel):
         # Graph forward & node classification
         graph_out, graph_emb = self.graph_forward(graph, sequence_output, train)
         sequence_output = graph_emb['tok'].unsqueeze(0)
+        sequence_output = concat_tok_srl(sequence_output, graph, graph_emb['srl'].to('cuda'))
          # answer type logits
         ans_type_logits = self.answer_type_classifier(self.attention(graph_out['sent']['emb'].view(1,-1,dict_params['out_feats']),
                                                                      graph_out['sent']['logits'][:,1].view(1,-1,1))
@@ -445,7 +446,7 @@ class HGNModel(BertPreTrainedModel):
                 'srl': graph_out['srl'],
                 'ans_type': {'loss': 0, 'logits': ans_type_logits},
                 'span': {'loss': 0, 'start_logits': start_logits, 'end_logits': end_logits}}  
-    
+
     def attention(self, x, z):
         # x: batch_size X max_nodes X feat_dim
         # z: attention logits
@@ -686,6 +687,18 @@ class HGNModel(BertPreTrainedModel):
             end_loss = loss_fct(end_logits, end_positions)
             total_loss = (start_loss + end_loss) / 2
         return (total_loss,  start_logits, end_logits)
+
+def concat_tok_srl(sequence_emb, g, srl_emb):
+        list_cat = []
+        for tok in g.nodes('tok'):
+            srl_node = g.in_edges(tok, etype='srl2tok')[0]
+            if srl_node.shape[0] == 0:
+                pass
+                list_cat.append(torch.cat((sequence_emb[0][tok], torch.zeros(sequence_emb[0][tok].shape).to(device)), dim=0))
+            else:
+                srl_node = srl_node[0].item()
+                list_cat.append(torch.cat((sequence_emb[0][tok], srl_emb[srl_node]), dim=0))
+        return torch.stack(list_cat).unsqueeze(0)
 
 import en_core_web_sm
 
