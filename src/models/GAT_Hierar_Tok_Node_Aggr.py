@@ -45,7 +45,7 @@ torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
 # %%
-data_path = "../../data/"
+data_path = "data/"
 hotpot_qa_path = os.path.join(data_path, "external")
 
 with open(os.path.join(hotpot_qa_path, "hotpot_train_v1.1.json"), "r") as f:
@@ -385,11 +385,9 @@ class HeteroRGCNLayer(nn.Module):
             if "2tok" in etype:
                 pass
             elif "srl2srl" == etype:
-                pass
+                funcs[etype] = (self.message_func_regular_node, self.reduce_func)
             elif "ent2ent_rel" == etype:
                 funcs[etype] = ((lambda e: self.message_func_rel(bert_token_emb, e)) , self.reduce_func)
-            elif "sent2at" == etype:
-                funcs[etype] = (self.message_func_AT_node, self.reduce_func)
             else:
                 funcs[etype] = (self.message_func_regular_node, self.reduce_func)
         G.multi_update_all(funcs, 'sum')
@@ -400,7 +398,7 @@ class HeteroRGCNLayer(nn.Module):
         #batched all tokens since we want to put into the GRU (srl, ent, hidden=tok) so batch size = 512
         h_tok = G.nodes['tok'].data['h'].view(1,-1,self.in_size)
         h_srl = G.nodes['tok'].data.pop('h_srl').view(1,-1,self.in_size)
-        gru_input = h_srl
+        gru_input = h_tok
         if 'h_ent' in G.nodes['tok'].data:
             # there can be an instance without entities (not common anyway)
             h_ent = G.nodes['tok'].data.pop('h_ent').view(1,-1,self.in_size)
@@ -1472,34 +1470,22 @@ class Validation():
         metrics['joint_recall'] += joint_recall
 
 # %%
-dict_ins2dict_doc2pred = dict()
-for ins_idx, ins in enumerate(hotpot_dev):
-    set_golden_docs = set([title for title, _ in ins['supporting_facts']])
-    dict_doc2pred = dict()
-    for doc_idx, (title, doc) in enumerate(ins['context']):
-        if title in set_golden_docs:
-            dict_doc2pred[doc_idx] = 1
-        else:
-            dict_doc2pred[doc_idx] = 0
-    dict_ins2dict_doc2pred[ins_idx] = dict_doc2pred
-
-# %%
 # model = HGNModel.from_pretrained('../../models/ans_type_pred_3_epochs')
 # model.cuda()
 
 # %%
-validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
-                        dev_tensor_input_ids, dev_tensor_attention_masks, 
-                        dev_tensor_token_type_ids,
-                        dev_list_span_idx)
-metrics, pred_json_oracle = validation.do_validation()
+# validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
+#                         dev_tensor_input_ids, dev_tensor_attention_masks, 
+#                         dev_tensor_token_type_ids,
+#                         dev_list_span_idx)
+# metrics, pred_json_oracle = validation.do_validation()
 
 # %%
-metrics
+# metrics
 
 # %%
-with open('../../preds_ans_type_pred_3_epochs_oracle.json', 'w+') as f:
-    json.dump(pred_json_oracle, f)
+# with open('../../preds_ans_type_pred_3_epochs_oracle.json', 'w+') as f:
+#     json.dump(pred_json_oracle, f)
 
 # %%
 # # %%
@@ -1563,13 +1549,13 @@ def record_eval_metric(neptune, metrics):
 
 
 # %%
-model_path = 'models/ans_type_pred_3_epochs'
+model_path = 'models/ans_type_pred_3_epochs_srl_updt_gru_input_fix'
 
 best_eval_em = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="561 3 epochs", params=PARAMS, upload_source_files=['src/models/GAT_Hierar_Tok_Node_Aggr.py']):
-    neptune.set_property('server', 'nipa')
+with neptune.create_experiment(name="587 srl updt fix gru input", params=PARAMS, upload_source_files=['src/models/GAT_Hierar_Tok_Node_Aggr.py']):
+    neptune.set_property('server', 'irgpu11')
     neptune.set_property('training_set_path', training_path)
     neptune.set_property('dev_set_path', dev_path)
 
@@ -1641,22 +1627,28 @@ with neptune.create_experiment(name="561 3 epochs", params=PARAMS, upload_source
                 scheduler.step()
                 model.zero_grad()
                 
-                # if (step +1) % 10000 == 0:
-                #     #############################
-                #     ######### Validation ########
-                #     #############################
-                #     validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
-                #                             dev_tensor_input_ids, dev_tensor_attention_masks, 
-                #                             dev_tensor_token_type_ids,
-                #                             dev_list_span_idx)
-                #     metrics = validation.do_validation()
-                #     model.train()
-                #     record_eval_metric(neptune, metrics)
+                if epoch_i == 0 and (step +1) == 10000:
+                    #############################
+                    ######### Validation ########
+                    #############################
+                    validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
+                                            dev_tensor_input_ids, dev_tensor_attention_masks, 
+                                            dev_tensor_token_type_ids,
+                                            dev_list_span_idx)
+                    metrics, pred_json = validation.do_validation()
+                    model.train()
+                    record_eval_metric(neptune, metrics)
 
-                #     curr_em = metrics['ans_em']
-                #     if  curr_em > best_eval_em:
-                #         best_eval_em = curr_em
-                #         model.save_pretrained(model_path) 
+                    curr_em = metrics['ans_em']
+                    if  curr_em > best_eval_em:
+                        best_eval_em = curr_em
+                        model.save_pretrained(model_path) 
+                        with open(os.path.join(model_path, 'output.json'), 'w+') as f:
+                            json.dump(pred_json, f)
+                if epoch_i == 2 and (step +1) % 10000 == 0:
+                    model_path_step = model_path + "/epoch3/step_" + str(step)
+                    os.mkdir(model_path_step)
+                    model.save_pretrained(model_path_step)
             total_train_loss += total_loss.detach().item()
 
             # free-up gpu memory
@@ -1683,7 +1675,7 @@ with neptune.create_experiment(name="561 3 epochs", params=PARAMS, upload_source
                                 dev_tensor_input_ids, dev_tensor_attention_masks, 
                                 dev_tensor_token_type_ids,
                                 dev_list_span_idx)
-        metrics = validation.do_validation()
+        metrics, pred_json = validation.do_validation()
         model.train()
         record_eval_metric(neptune, metrics)
 
@@ -1691,6 +1683,8 @@ with neptune.create_experiment(name="561 3 epochs", params=PARAMS, upload_source
         if  curr_em > best_eval_em:
             best_eval_em = curr_em
             model.save_pretrained(model_path) 
+            with open(os.path.join(model_path, 'output.json'), 'w+') as f:
+                json.dump(pred_json, f)
 
     # Calculate the average loss over all of the batches.
     avg_train_loss = total_train_loss / len(train_dataloader)            
