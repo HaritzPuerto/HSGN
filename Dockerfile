@@ -3,6 +3,7 @@ WORKDIR /HSGN/
 RUN mkdir data
 RUN mkdir data/external
 
+
 RUN apt-get update && apt install build-essential -y --no-install-recommends
 RUN  apt-get update \
   && apt-get install -y wget \
@@ -11,6 +12,9 @@ COPY requirements.txt requirements.txt
 
 RUN pip install -r requirements.txt
 
+RUN python -m spacy download en
+RUN python -c 'import stanza; stanza.download("en")'
+COPY . /HSGN/
 #RUN wget http://curtis.ml.cmu.edu/datasets/hotpot/hotpot_dev_distractor_v1.json -O data/external/input.json
 
 #COPY . .
