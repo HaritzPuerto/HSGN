@@ -238,7 +238,6 @@ class Dataset():
                  'token_type_ids': context_token_type_ids}, dict_idx)
 
     def create_graph(self, hotpot_instance, list_entities, dict_idx, context, ins_idx):
-        def create_graph(self, hotpot_instance, list_entities, dict_idx, context, ins_idx):
         node_idx = 0
         # Edges #
         ## Hierarchical
