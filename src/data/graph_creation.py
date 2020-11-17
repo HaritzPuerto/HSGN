@@ -800,10 +800,6 @@ class Dataset():
         if list_query2sent_pred != []:
             dict_edges['query', 'query2sent_pred', 'sent'] = list_query2sent_pred
         graph = dgl.heterograph(dict_edges)
-        # doc metadata
-        graph.nodes['doc'].data['st_end_idx'] =  torch.tensor(list_doc_st_end_idx)
-#         graph.nodes['doc']['list_context_idx'] = torch.tensor(list_doc_context_idx).reshape(-1,1)
-        graph.nodes['doc'].data['labels'] = torch.tensor(list_doc_lbl).view(-1,1)
         # sent metadata
         graph.nodes['sent'].data['st_end_idx'] =  torch.tensor(list_sent_st_end_idx)
 #         graph.nodes['sent']['list_context_idx'] = torch.tensor(list_sent_context_idx).reshape(-1,1)
