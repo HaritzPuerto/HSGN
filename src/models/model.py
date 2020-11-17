@@ -36,14 +36,11 @@ np.random.seed(random_seed)
 torch.manual_seed(random_seed)
 torch.cuda.manual_seed_all(random_seed)
 
-pretrained_weights = 'bert-base-cased'
+pretrained_weights = 'bert-base-uncased'
 #pretrained_weights = 'bert-large-cased-whole-word-masking'
 device = 'cuda'
 
 weights = torch.tensor([1., 30.9, 31.], device=device)
-
-# %%
-loss_fn_ans_type = nn.CrossEntropyLoss(weights)
 
 # %%
 def get_sent_node_from_srl_node(graph, srl_node, list_srl_nodes):
@@ -565,7 +562,6 @@ class HGNModel(BertPreTrainedModel):
             
            
         # sent loss
-        loss_sent = loss_fn(logits_sent, sent_labels.view(-1).long())
         probs_sent = F.softmax(logits_sent, dim=1).cpu()
         # shape [num_sent_nodes, 2]
         
@@ -576,7 +572,6 @@ class HGNModel(BertPreTrainedModel):
             loss_srl = None
             probs_srl = None
         else:
-            loss_srl = loss_fn(logits_srl, srl_labels.view(-1).long())
             probs_srl = F.softmax(logits_srl, dim=1).cpu()
             # shape [num_srl_nodes, 2]
 
@@ -587,7 +582,6 @@ class HGNModel(BertPreTrainedModel):
             loss_ent = None
             probs_ent = None
         else:        
-            loss_ent = loss_fn(logits_ent, ent_labels.view(-1).long())
             probs_ent = F.softmax(logits_ent, dim=1).cpu()
             # shape [num_ent_nodes, 2]
 
@@ -598,10 +592,10 @@ class HGNModel(BertPreTrainedModel):
         if ent_labels is not None:
             ent_labels = ent_labels.cpu().view(-1)
 
-        return ({'sent': {'loss': loss_sent, 'probs': probs_sent, 'logits': logits_sent, 
+        return ({'sent': {'loss': 0, 'probs': probs_sent, 'logits': logits_sent, 
                           'emb': sent_emb, 'lbl': sent_labels},
-                'srl': {'loss': loss_srl, 'probs': probs_srl, 'lbl': srl_labels},
-                'ent': {'loss': loss_ent, 'probs': probs_ent, 'lbl': ent_labels},
+                'srl': {'loss': 0, 'probs': probs_srl, 'lbl': srl_labels},
+                'ent': {'loss': 0, 'probs': probs_ent, 'lbl': ent_labels},
                 },
                 graph_emb)
     
