@@ -280,41 +280,36 @@ class HeteroRGCN(nn.Module):
         self.node_norm = NodeNorm()
         self.layer1 = HeteroRGCNLayer(in_size, hidden_size, feat_drop, attn_drop)
         self.layer2 = HeteroRGCNLayer(hidden_size, out_size, feat_drop, attn_drop)
-        #self.gru_layer_lvl = nn.GRU(in_size, out_size)
+        self.gru_layer_lvl = nn.GRU(in_size, out_size)
         
-#         self.init_params()
+        self.init_params()
 
     def forward(self, G, emb, bert_token_emb):
         #h_tok0 = emb['tok'].view(1,-1,self.in_size) # it's already normalized
         h_dict0 = {k: self.node_norm(h) for k, h in emb.items()}
         
-        h_dict = self.layer1(G, h_dict0, bert_token_emb)
+        h_dict1 = self.layer1(G, h_dict0, bert_token_emb)
         #h_tok1 = self.node_norm(h_dict['tok'].view(1,-1,self.in_size))
-        h_dict = {k: F.leaky_relu(self.node_norm(h)) for k, h in h_dict.items()}
+        h_dict1 = {k: F.leaky_relu(self.node_norm(h)) for k, h in h_dict1.items()}
         
-        h_dict = self.layer2(G, h_dict, bert_token_emb)
+        h_dict2 = self.layer2(G, h_dict1, bert_token_emb)
+        h_dict2 = {k: F.leaky_relu(self.node_norm(h)) for k, h in h_dict2.items()}
         #h_tok2 = self.node_norm(h_dict['tok'].view(1,-1,self.in_size))
-        
+        h_final = h_dict2
         if self.residual:
-            h_dict = {k : F.leaky_relu(self.node_norm(h_dict[k]) + h_dict0[k]) for k in h_dict.keys()}
-        else:
-            h_dict = {k : F.leaky_relu(self.node_norm(h)) for k, h in h_dict.items()}
-        # tok2, tok1, tok0 is the sequence input into the gru
-        # intuition: add the new knowledge from the graph in the original token emb
-        # origianl tok emb do not contain graph info, so they can be more suitable for span pred
-        # gru can remove the graph info we don't need for span pred
-#         gru_input = torch.cat((h_tok1, h_tok0), dim=0)
-#         tok_emb = self.gru_layer_lvl(gru_input, h_tok2)[0][-1].view(-1, self.in_size)
-#         h_dict['tok'] = tok_emb
-        
-        return h_dict
+            # h_dict = {k : F.leaky_relu(self.node_norm(h_dict[k]) + h_dict0[k]) for k in h_dict.keys()}
+            h_final = dict()
+            for k in h_dict0.keys():
+                gru_input = torch.cat((h_dict1[k].view(1,-1,self.in_size), h_dict2[k].view(1,-1,self.in_size)), dim=0)
+                h_final[k] = self.gru_layer_lvl(gru_input, h_dict0[k].view(1,-1,self.in_size))[0][-1].view(-1, self.in_size)
+        return h_final
     
-#     def init_params(self):
-#         for param in self.gru_layer_lvl.parameters():
-#             if len(param.shape) >= 2:
-#                 nn.init.orthogonal_(param.data)
-#             else:
-#                 nn.init.normal_(param.data)
+    def init_params(self):
+        for param in self.gru_layer_lvl.parameters():
+            if len(param.shape) >= 2:
+                nn.init.orthogonal_(param.data)
+            else:
+                nn.init.normal_(param.data)
 
 # %%
 class GeLU(nn.Module):
@@ -333,7 +328,7 @@ if 'albert-xxlarge-v2' == pretrained_weights:
 dict_params = {'in_feats': bert_dim, 'out_feats': bert_dim, 'feat_drop': 0.2, 'attn_drop': 0.1, 'hidden_size_classifier': bert_dim,
                'weight_sent_loss': 2, 'weight_srl_loss': 1, 'weight_ent_loss': 1, 'bi_gru_layers': 1,
                'weight_span_loss': 5, 'weight_ans_type_loss': 1, 'span_drop': 0.2,
-               'gat_layers': 2, 'accumulation_steps': 1, 'residual': True,}
+               'gat_layers': 4, 'accumulation_steps': 1, 'residual': True,}
 class HGNModel(BertPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
