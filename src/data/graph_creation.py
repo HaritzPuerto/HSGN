@@ -231,6 +231,7 @@ class Dataset():
             context_token_type_ids.extend([0] * (self.max_len-len(context_token_type_ids)))
         else:
             context_input_ids = context_input_ids[:self.max_len]
+            context_input_ids[-1] = 102 # SEP (last one)
             context_attention_mask = context_attention_mask[:self.max_len]
             context_token_type_ids = context_token_type_ids[:self.max_len]
         return ({'input_ids': context_input_ids,
@@ -759,13 +760,11 @@ class Dataset():
                                                                              list_srl_rel)
         
         dict_edges = {
-                     #('sent', 'sent2doc', 'doc'): list_sent2doc,  # lbl: [SENT2DOC]
                      ('srl', 'srl2sent', 'sent'): list_srl2sent,  # lbl: [SRL2SENT]
                      # to token
                      ('srl', 'srl2tok', 'tok'): list_srl2tok,     # lbl: [SRL2TOK]
                      # end hierarchical
                      # same-level edges
-                     #('doc', 'doc2doc_self', 'doc'): list_doc2doc,         # lbl: [DOC2DOC_SELF]
                      ('sent', 'sent2sent', 'sent'): list_sent2sent,   # lbl: [SENT2SENT]
                      ('srl', 'srl2srl', 'srl'): list_srl2srl,         # lbl: [SRL2SRL]
                      ('srl', 'srl2self', 'srl'): list_srl2self,         # lbl: [SRL2SELF]
@@ -775,7 +774,6 @@ class Dataset():
                      ('sent', 'sent_multihop', 'sent'): list_sent_multihop,
                      ('query', 'query2self', 'query'): [(0,0)]
                     }
-        
         if list_ent2srl != []:
             dict_edges[('ent', 'ent2srl', 'srl')] = list_ent2srl     # lbl: [ENT2SRL]
         if list_ent2tok != []:
@@ -792,13 +790,13 @@ class Dataset():
         if list_srl_tmp2srl != []:
             dict_edges[('srl_tmp', 'srl_tmp2srl', 'srl')] = list_srl_tmp2srl  # lbl: [SRL_TMP2SRL]
             dict_edges[('srl_tmp', 'srl_tmp2self', 'srl_tmp')] =  [(u,u) for u in range(srl_tmp_node_idx)] # lbl: [SRL_TMP2SELF]
-        
         if list_query2sent_multihop != []:
             dict_edges[('query', 'query2sent_multihop', 'sent')] = list_query2sent_multihop
         if list_srl2query != []:
             dict_edges[('srl', 'srl2query', 'query')] = list_srl2query
         if list_query2sent_pred != []:
             dict_edges['query', 'query2sent_pred', 'sent'] = list_query2sent_pred
+        
         graph = dgl.heterograph(dict_edges)
         # sent metadata
         graph.nodes['sent'].data['st_end_idx'] =  torch.tensor(list_sent_st_end_idx)
