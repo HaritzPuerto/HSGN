@@ -4,23 +4,40 @@ from src.models.document_retrieval import DocumentRetrieval
 import torch
 import json
 import os
+import sys, subprocess
+
+def convert_sae_doc_ret_output2our_input(hotpot):
+    with open('SAE/output/pred_gold_idx.json', 'r') as f:
+        pred_gold_idx = json.load(f)
+    out = dict()
+    for ins_idx, pred in enumerate(pred_gold_idx):
+        dict_doc2pred = dict()
+        if len(hotpot[ins_idx]['context']) == 2:
+            dict_doc2pred = {0: 1, 1: 1}
+        else:
+            for i in range(len(hotpot[ins_idx]['context'])):
+                if i in pred:
+                    dict_doc2pred[i] = 1
+                else:
+                    dict_doc2pred[i] = 0
+        out[ins_idx] = dict_doc2pred
+    return out
+
 
 device = 'cuda'
 data_path = 'data/'
-pretrained_weights = 'bert-large-cased-whole-word-masking'
-#pretrained_weights = 'bert-base-cased'
+pretrained_weights = 'bert-large-uncased-whole-word-masking'
+#pretrained_weights = 'bert-base-uncased'
 model_path = 'models/graph_model'
-doc_retr_model_path = 'models/doc_retrieval'
 
 print("Preprocessing data")
 print("Loading HotpotQA")
 hotpotqa_path = 'external/'
-with open(os.path.join(data_path, hotpotqa_path, "input.json"), "r") as f:
+input_file = os.path.join(data_path, hotpotqa_path, "input.json")
+with open(input_file, "r") as f:
     hotpot = json.load(f)
-print("Loading the document retrieval model")
-doc_retr = DocumentRetrieval(device, doc_retr_model_path)
-print("Computing the relevant documents")
-dict_ins2dict_doc2pred = doc_retr.predict_relevant_docs(hotpot)
+
+dict_ins2dict_doc2pred = convert_sae_doc_ret_output2our_input(hotpot)
 print("Creating graphs for the predicted relevant documents")
 output = create_dataloader(hotpot, dict_ins2dict_doc2pred, pretrained_weights)
 list_graphs = output['list_graphs']

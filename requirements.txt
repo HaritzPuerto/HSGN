@@ -13,3 +13,7 @@ dgl-cu101==0.4.2
 stanza==1.0.0
 networkx==2.4
 ujson
+boto3
+regex
+sacremoses
+fastparquet

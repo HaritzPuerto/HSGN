@@ -8,9 +8,9 @@ class SRL():
     def __init__(self, device='cuda'):
         self.predictor = None
         if device == 'cuda':
-            self.predictor = Predictor.from_path("https://s3-us-west-2.amazonaws.com/allennlp/models/bert-base-srl-2019.06.17.tar.gz", cuda_device=0)
+            self.predictor = Predictor.from_path("models/srl_model/bert-base-srl-2019.06.17.tar.gz", cuda_device=0)
         else:
-            self.predictor = Predictor.from_path("https://s3-us-west-2.amazonaws.com/allennlp/models/bert-base-srl-2019.06.17.tar.gz")
+            self.predictor = Predictor.from_path("models/srl_model/bert-base-srl-2019.06.17.tar.gz")
 
     def sentence2srl_args(self, sentence: str) -> (list, list):
         '''

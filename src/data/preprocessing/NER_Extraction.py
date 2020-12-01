@@ -7,7 +7,7 @@ import stanza
 
 class NER_stanza():
     def __init__(self):
-        stanza.download('en')  # download English model
+        #stanza.download('en')  # download English model
         super(NER_stanza).__init__()
         self.nlp = stanza.Pipeline(lang='en', processors='tokenize,ner')
 

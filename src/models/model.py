@@ -36,8 +36,7 @@ np.random.seed(random_seed)
 torch.manual_seed(random_seed)
 torch.cuda.manual_seed_all(random_seed)
 
-pretrained_weights = 'bert-base-uncased'
-#pretrained_weights = 'bert-large-cased-whole-word-masking'
+pretrained_weights = 'bert-large-uncased-whole-word-masking'
 device = 'cuda'
 
 weights = torch.tensor([1., 30.9, 31.], device=device)
