@@ -231,6 +231,7 @@ class Dataset():
             context_token_type_ids.extend([0] * (self.max_len-len(context_token_type_ids)))
         else:
             context_input_ids = context_input_ids[:self.max_len]
+            context_input_ids[-1] = 102 # SEP (last one)
             context_attention_mask = context_attention_mask[:self.max_len]
             context_token_type_ids = context_token_type_ids[:self.max_len]
         return ({'input_ids': context_input_ids,
@@ -251,6 +252,8 @@ class Dataset():
         list_ent2srl = []
         list_srl2query = []
         list_query2srl = []
+        list_query2ent = []
+        list_query2sent = []
         ### to tokens
         list_doc2tok = []
         list_tok2doc = []
@@ -542,7 +545,10 @@ class Dataset():
 #         # fully connected doc nodes    
 #         list_doc2doc.extend([(u, v) for u in list_doc_nodes for v in list_doc_nodes if u != v])
 #         list_doc2doc.extend([(v, u) for u in list_doc_nodes for v in list_doc_nodes if u != v])
-        
+        # if sent_node_idx > 0:
+        #     list_query2sent = [(0, s) for s in range(sent_node_idx)] # lbl: [QUERY2SENT]
+        # if ent_node_idx > 0:
+        #     list_query2ent = [(0, e) for e in range(ent_node_idx)]  # lbl: [QUERY2ENT]
         ############ Query node ################
         (q_st, q_end) = dict_idx['q_token_st_end_idx']
         list_query_st_end_idx = [(q_st, q_end)]
@@ -693,7 +699,7 @@ class Dataset():
             # srl_arg -> query  # lbl: [SRL2QUERY]
             list_srl2query.extend([(arg, 0) for arg in list_arg_nodes]) 
             # query -> arg_srl  # lbl: [QUERY2SRL]
-            list_query2srl.extend([(0, arg) for arg in list_arg_nodes])
+            # list_query2srl.extend([(0, arg) for arg in list_arg_nodes])
         for srl in range(first_query_srl):
             for q_srl in range(first_query_srl, srl_node_idx):
                 list_q_srl2srl.append((q_srl, srl))
@@ -710,30 +716,20 @@ class Dataset():
                                                           list_srl2sent,
                                                           list_srl2query,
                                                           90)
-        ### Answer Type Node ###
-        list_sent2at = []
-        for sent in range(sent_node_idx):
-            list_sent2at.append((sent, 0)) # lbl: [SENT2AT]
-        list_srl2at = []
-        for srl in range(srl_node_idx):
-            list_srl2at.append((srl, 0)) # lbl: [SRL2AT]
-        list_ent2at = []
-        for ent in range(ent_node_idx):
-            list_ent2at.append((ent, 0)) # lbl: [ENT2AT]
+       
         # make the heterogenous graph
         list_srl2self = [(v, v) for v in range(srl_node_idx)]
         # create ent rel using SRL predicates
         list_ent2ent_rel, list_ent2ent_metadata = self.compute_ent_relations(list_srl2srl, 
                                                                              list_srl2ent, 
                                                                              list_srl_rel)
+        
         dict_edges = {
-                    #  ('sent', 'sent2doc', 'doc'): list_sent2doc,  # lbl: [SENT2DOC]
                      ('srl', 'srl2sent', 'sent'): list_srl2sent,  # lbl: [SRL2SENT]
                      # to token
                      ('srl', 'srl2tok', 'tok'): list_srl2tok,     # lbl: [SRL2TOK]
                      # end hierarchical
                      # same-level edges
-                    #  ('doc', 'doc2doc_self', 'doc'): list_doc2doc,         # lbl: [DOC2DOC_SELF]
                      ('sent', 'sent2sent', 'sent'): list_sent2sent,   # lbl: [SENT2SENT]
                      ('srl', 'srl2srl', 'srl'): list_srl2srl,         # lbl: [SRL2SRL]
                      ('srl', 'srl2self', 'srl'): list_srl2self,         # lbl: [SRL2SELF]
@@ -741,6 +737,7 @@ class Dataset():
                      # multi-hop edges
                      ('srl', 'srl_multihop', 'srl'): list_srl_multihop,
                      ('sent', 'sent_multihop', 'sent'): list_sent_multihop,
+                     ('query', 'query2self', 'query'): [(0,0)]
                     }
         if list_ent2srl != []:
             dict_edges[('ent', 'ent2srl', 'srl')] = list_ent2srl     # lbl: [ENT2SRL]
@@ -754,18 +751,17 @@ class Dataset():
             dict_edges[('ent', 'ent_multihop', 'ent')] = list_ent_multihop # lbl: [ENT2ENT_MH]
         if list_srl_loc2srl != []:
             dict_edges[('srl_loc', 'srl_loc2srl', 'srl')] = list_srl_loc2srl  # lbl: [SRL_LOC2SRL]
+            dict_edges[('srl_loc', 'srl_loc2self', 'srl_loc')] =  [(u,u) for u in range(srl_loc_node_idx)] # lbl: [SRL_LOC2SELF]
         if list_srl_tmp2srl != []:
             dict_edges[('srl_tmp', 'srl_tmp2srl', 'srl')] = list_srl_tmp2srl  # lbl: [SRL_TMP2SRL]
-        if list_sent2query_multihop != []:
-            dict_edges[('sent', 'sent2query_multihop', 'query')] = list_sent2query_multihop
+            dict_edges[('srl_tmp', 'srl_tmp2self', 'srl_tmp')] =  [(u,u) for u in range(srl_tmp_node_idx)] # lbl: [SRL_TMP2SELF]
         if list_query2sent_multihop != []:
             dict_edges[('query', 'query2sent_multihop', 'sent')] = list_query2sent_multihop
         if list_srl2query != []:
             dict_edges[('srl', 'srl2query', 'query')] = list_srl2query
-        if list_q_srl2srl != []:
-            dict_edges[('srl', 'query_srl2srl', 'srl')] = list_q_srl2srl
         if list_query2sent_pred != []:
-            dict_edges['query', 'query2srl_pred', 'sent'] = list_query2sent_pred
+            dict_edges['query', 'query2sent_pred', 'sent'] = list_query2sent_pred
+        
         graph = dgl.heterograph(dict_edges)
         # sent metadata
         graph.nodes['sent'].data['st_end_idx'] =  torch.tensor(list_sent_st_end_idx)

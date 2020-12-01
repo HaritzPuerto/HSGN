@@ -45,7 +45,7 @@ torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
 # %%
-data_path = "../../data/"
+data_path = "data/"
 hotpot_qa_path = os.path.join(data_path, "external")
 
 with open(os.path.join(hotpot_qa_path, "hotpot_train_v1.1.json"), "r") as f:
@@ -77,7 +77,7 @@ for idx in set_hard:
 
 # %%
 device = 'cuda'
-pretrained_weights = 'bert-base-cased'
+pretrained_weights = 'bert-base-uncased'
 #pretrained_weights = 'bert-large-cased-whole-word-masking'
 #pretrained_weights = 'albert-xxlarge-v2'
 # ## HotpotQA Processing
@@ -85,8 +85,8 @@ pretrained_weights = 'bert-base-cased'
 # ## Processing
 
 # %%
-training_path = os.path.join(data_path, "processed/training/heterog_20201004_query_edges/")
-dev_path = os.path.join(data_path, "processed/dev/heterog_20201004_query_edges/")
+training_path = os.path.join(data_path, "processed/training/heterog_20201115_query_edges_v5_uncased/")
+dev_path = os.path.join(data_path, "processed/dev/heterog_20201115_query_edges_v5_uncased/")
 
 with open(os.path.join(training_path, 'list_span_idx.p'), 'rb') as f:
     list_span_idx = pickle.load(f)
@@ -218,6 +218,7 @@ class LabelSmoothingLoss(nn.Module):
 #loss_fn = LabelSmoothingLoss()
 loss_fn = nn.CrossEntropyLoss()
 # %%
+# https://github.com/miafei/NodeNorm
 class NodeNorm(nn.Module):
     def __init__(self, unbiased=False, eps=1e-5):
         super(NodeNorm, self).__init__()
@@ -278,33 +279,21 @@ class GAT(nn.Module):
 
 # %%
 class HeteroRGCNLayer(nn.Module):
-    def __init__(self, in_size, out_size, etypes, feat_drop=0., attn_drop=0., residual=False):
+    def __init__(self, in_size, out_size, feat_drop=0., attn_drop=0.):
         super(HeteroRGCNLayer, self).__init__()
         self.in_size = in_size
-        # W_r for each edge type
-        self.tok_trans = nn.Linear(in_size, out_size)
-        self.tok_att = nn.Linear(2 * in_size, out_size)
-
-        self.rel_trans = nn.Linear(2 * in_size, out_size)
-
-        self.node_trans = nn.Linear(in_size, out_size)
-        self.node_att = nn.Linear(2 * in_size, out_size)
-
-        self.common_space_trans = nn.Linear(in_size, out_size)
-        
-        self.gru_node2tok = nn.GRU(in_size, out_size)
-        
+        self.out_size = out_size
+        self.rel_trans = nn.Linear(in_size + bert_dim, in_size)
+        self.node_trans = nn.Sequential(nn.Linear(in_size, in_size),
+                                    nn.LeakyReLU(),
+                                        nn.Dropout(feat_drop),
+                                        nn.Linear(in_size, out_size))
+        self.node_att = nn.Linear(2 * out_size, out_size)       
+        self.gru_node2tok = nn.GRU(out_size, out_size)
         self.feat_drop = nn.Dropout(feat_drop)
         self.attn_drop = nn.Dropout(attn_drop)
-        
-        self.at_trans = nn.Linear(in_size, out_size)
-        self.at_att = nn.Linear(2 * in_size, out_size)
-
-        # self.common_space = nn.Linear(in_size, out_size)
-        self.residual = residual
 
         self.reset_parameters()
-
 
     def message_func_rel(self, bert_token_emb, edges):
         '''
@@ -315,12 +304,12 @@ class HeteroRGCNLayer(nn.Module):
         rel_emb = []
         for i, (x, y) in enumerate(rel_span_idx):
             # rel type = {1, -1}
-            rel_emb.append(edges.data['rel_type'][i] * torch.mean(bert_token_emb[x:y], dim=0))
+            rel_emb.append(torch.mean(bert_token_emb[x:y], dim=0))
         rel_emb = torch.stack(rel_emb, dim=0)
         assert not torch.isnan(rel_emb).any()
 #         return {'rel': rel_emb, 'srl': edges.src['h']}
         src = edges.src['h']
-        m = self.common_space_trans(self.rel_trans(torch.cat((src, rel_emb), dim=1)))
+        m = self.node_trans(self.rel_trans(torch.cat((src, rel_emb), dim=1)))
         # m: [num srl x 768]
         dst = self.node_trans(edges.dst['h'])
         cat_uv = torch.cat([m,
@@ -339,13 +328,11 @@ class HeteroRGCNLayer(nn.Module):
         return {'h': h}
     
     def message_func_2tok(self, edges):
-        '''
-        e_ij = LeakyReLU(W * (Wh_j || Wh_i))
-        '''
-        src = edges.src['h'].view(1,-1,self.in_size)
-        tok = edges.dst['h'].view(1,-1,self.in_size) # the token node
-        m = self.gru_node2tok(src, tok)[0].squeeze(0)
-        return {'m': m}
+#         src = edges.src['h'].view(1,-1,self.in_size)
+#         tok = edges.dst['h'].view(1,-1,self.in_size) # the token node
+#         m = self.gru_node2tok(src, tok)[0].squeeze(0)
+        src = edges.src['h'] # already updated 
+        return {'m': src}
     
     def reduce_func_srl2tok(self, nodes):
         h = torch.sum(nodes.mailbox['m'], dim=1)
@@ -377,19 +364,13 @@ class HeteroRGCNLayer(nn.Module):
                 G.nodes[srctype].data['h'] = self.feat_drop(feat_dict[srctype])
             if 'h' not in G.nodes[dsttype].data:
                 G.nodes[dsttype].data['h'] = self.feat_drop(feat_dict[dsttype])
-            if self.residual and 'resid' not in G.nodes[srctype].data:
-                G.nodes[srctype].data['resid'] = feat_dict[srctype]
-            if self.residual and 'resid' not in G.nodes[dsttype].data:
-                G.nodes[dsttype].data['resid'] = feat_dict[dsttype]
 
             if "2tok" in etype:
                 pass
             elif "srl2srl" == etype:
-                pass
+                funcs[etype] = ((lambda e: self.message_func_rel(bert_token_emb, e)) , self.reduce_func)
             elif "ent2ent_rel" == etype:
                 funcs[etype] = ((lambda e: self.message_func_rel(bert_token_emb, e)) , self.reduce_func)
-            elif "sent2at" == etype:
-                funcs[etype] = (self.message_func_AT_node, self.reduce_func)
             else:
                 funcs[etype] = (self.message_func_regular_node, self.reduce_func)
         G.multi_update_all(funcs, 'sum')
@@ -398,32 +379,27 @@ class HeteroRGCNLayer(nn.Module):
         if 'ent' in G.ntypes:
             G['ent2tok'].update_all(self.message_func_2tok, fn.sum('m', 'h_ent'))
         #batched all tokens since we want to put into the GRU (srl, ent, hidden=tok) so batch size = 512
-        h_tok = G.nodes['tok'].data['h'].view(1,-1,self.in_size)
-        h_srl = G.nodes['tok'].data.pop('h_srl').view(1,-1,self.in_size)
-        gru_input = h_srl
+        h_tok = self.node_trans(G.nodes['tok'].data['h'])
+        h_tok = h_tok.view(1,-1,self.out_size)
+        h_srl = G.nodes['tok'].data.pop('h_srl').view(1,-1,self.out_size)
+        gru_input = torch.cat((h_srl, h_tok), dim=0)  
         if 'h_ent' in G.nodes['tok'].data:
             # there can be an instance without entities (not common anyway)
-            h_ent = G.nodes['tok'].data.pop('h_ent').view(1,-1,self.in_size)
-            gru_input = torch.cat((h_ent, h_tok), dim=0)            
-        G.nodes['tok'].data['h'] = self.gru_node2tok(gru_input, h_srl)[0][-1]
+            h_ent = G.nodes['tok'].data.pop('h_ent').view(1,-1,self.out_size)
+            gru_input = torch.cat((h_ent, h_tok), dim=0)
+            gru_input = torch.cat((h_srl, gru_input), dim=0)  
+        G.nodes['tok'].data['h'] = self.gru_node2tok(gru_input)[0][-1]
 
-        out = None
-        if self.residual:
-            out = {ntype : (G.nodes[ntype].data['h'] + G.nodes[ntype].data['resid']) for ntype in G.ntypes}
-            # remove resid from the memory since it's not needed
-            for ntype in G.ntypes:
-                G.nodes[ntype].data.pop('resid')                 
-        else:
-            out = {ntype : G.nodes[ntype].data.pop('h') for ntype in G.ntypes}
-
+        out = {ntype : G.nodes[ntype].data.pop('h') for ntype in G.ntypes}
         # return the updated node feature dictionary
         self.clean_memory(G)
         return out
 
     def reset_parameters(self):
         """Reinitialize learnable parameters."""
-        gain = nn.init.calculate_gain('relu')
-        nn.init.xavier_normal_(self.node_trans.weight, gain=gain)
+        gain = nn.init.calculate_gain('leaky_relu')
+        nn.init.xavier_normal_(self.node_trans[0].weight, gain=gain)
+        nn.init.xavier_normal_(self.node_trans[3].weight, gain=gain)
         nn.init.xavier_normal_(self.node_att.weight, gain=gain)
         for param in self.gru_node2tok.parameters():
             if len(param.shape) >= 2:
@@ -447,35 +423,54 @@ class HeteroRGCNLayer(nn.Module):
 
 
 # %%
-class HeteroRGCN(nn.Module):
-    def __init__(self, etypes, in_size, hidden_size, out_size, feat_drop, attn_drop, residual):
-        super(HeteroRGCN, self).__init__()
+class MultiHeadGATLayer(nn.Module):
+    def __init__(self, in_size, out_size, feat_drop, attn_drop):
+        super(MultiHeadGATLayer, self).__init__()
         self.in_size = in_size
         self.node_norm = NodeNorm()
-        self.layer1 = HeteroRGCNLayer(in_size, hidden_size, etypes, feat_drop, attn_drop, residual)
-        self.layer2 = HeteroRGCNLayer(hidden_size, out_size, etypes, feat_drop, attn_drop, residual)
+        self.head1 = HeteroRGCNLayer(in_size, out_size, feat_drop, attn_drop)
+        self.head2 = HeteroRGCNLayer(in_size, out_size, feat_drop, attn_drop)
+
+    def forward(self, G, emb, bert_token_emb):
+        h_dict1 = self.head1(G, emb, bert_token_emb)
+        h_dict2 = self.head2(G, emb, bert_token_emb)
+        cat_h_dict = dict()
+        for k in h_dict1.keys():
+            cat_h_dict[k] = torch.cat((h_dict1[k], h_dict2[k]), dim=1)
+        # concat on the output feature dimension (dim=1)
+        return cat_h_dict
+# %%
+class HeteroRGCN(nn.Module):
+    def __init__(self, in_size, hidden_size, out_size, feat_drop, attn_drop, residual):
+        super(HeteroRGCN, self).__init__()
+        self.in_size = in_size
+        self.residual = residual
+        self.node_norm = NodeNorm()
+        self.layer1 = HeteroRGCNLayer(in_size, hidden_size, feat_drop, attn_drop)
+        self.layer2 = HeteroRGCNLayer(hidden_size, out_size, feat_drop, attn_drop)
         self.gru_layer_lvl = nn.GRU(in_size, out_size)
         
         self.init_params()
-        
+
     def forward(self, G, emb, bert_token_emb):
-        h_tok0 = emb['tok'].view(1,-1,self.in_size) # it's already normalized
+        #h_tok0 = emb['tok'].view(1,-1,self.in_size) # it's already normalized
+        h_dict0 = {k: self.node_norm(h) for k, h in emb.items()}
         
-        h_dict = self.layer1(G, emb, bert_token_emb)
-        h_tok1 = self.node_norm(h_dict['tok'].view(1,-1,self.in_size))
-        h_dict = {k : F.leaky_relu(self.node_norm(h)) for k, h in h_dict.items()}
+        h_dict1 = self.layer1(G, h_dict0, bert_token_emb)
+        #h_tok1 = self.node_norm(h_dict['tok'].view(1,-1,self.in_size))
+        h_dict1 = {k: F.leaky_relu(self.node_norm(h)) for k, h in h_dict1.items()}
         
-        h_dict = self.layer2(G, h_dict, bert_token_emb)
-        h_tok2 = self.node_norm(h_dict['tok'].view(1,-1,self.in_size))
-        h_dict = {k : F.leaky_relu(self.node_norm(h)) for k, h in h_dict.items()}
-        # tok2, tok1, tok0 is the sequence input into the gru
-        # intuition: add the new knowledge from the graph in the original token emb
-        # origianl tok emb do not contain graph info, so they can be more suitable for span pred
-        # gru can remove the graph info we don't need for span pred
-        gru_input = torch.cat((h_tok1, h_tok0), dim=0)
-        tok_emb = self.gru_layer_lvl(gru_input, h_tok2)[0][-1].view(-1, self.in_size)
-        h_dict['tok'] = tok_emb
-        return h_dict
+        h_dict2 = self.layer2(G, h_dict1, bert_token_emb)
+        h_dict2 = {k: F.leaky_relu(self.node_norm(h)) for k, h in h_dict2.items()}
+        #h_tok2 = self.node_norm(h_dict['tok'].view(1,-1,self.in_size))
+        h_final = h_dict2
+        if self.residual:
+            # h_dict = {k : F.leaky_relu(self.node_norm(h_dict[k]) + h_dict0[k]) for k in h_dict.keys()}
+            h_final = dict()
+            for k in h_dict0.keys():
+                gru_input = torch.cat((h_dict1[k].view(1,-1,self.in_size), h_dict2[k].view(1,-1,self.in_size)), dim=0)
+                h_final[k] = self.gru_layer_lvl(gru_input, h_dict0[k].view(1,-1,self.in_size))[0][-1].view(-1, self.in_size)
+        return h_final
     
     def init_params(self):
         for param in self.gru_layer_lvl.parameters():
@@ -499,9 +494,9 @@ if 'large' in pretrained_weights:
 if 'albert-xxlarge-v2' == pretrained_weights:
     bert_dim = 4096
 dict_params = {'in_feats': bert_dim, 'out_feats': bert_dim, 'feat_drop': 0.2, 'attn_drop': 0.1, 'hidden_size_classifier': bert_dim,
-               'weight_sent_loss': 1, 'weight_srl_loss': 1, 'weight_ent_loss': 1, 'bi_gru_layers': 1,
-               'weight_span_loss': 2, 'weight_ans_type_loss': 1, 'span_drop': 0.2,
-               'gat_layers': 2, 'etypes': graph.etypes, 'accumulation_steps': 1, 'residual': True,}
+               'weight_sent_loss': 2, 'weight_srl_loss': 1, 'weight_ent_loss': 1, 'bi_gru_layers': 1,
+               'weight_span_loss': 5, 'weight_ans_type_loss': 1, 'span_drop': 0.2,
+               'gat_layers': 4, 'accumulation_steps': 1, 'residual': True,}
 class HGNModel(BertPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
@@ -515,8 +510,8 @@ class HGNModel(BertPreTrainedModel):
         self.gru_aggregation = nn.Linear(2*dict_params['in_feats'], dict_params['in_feats'])
         self.node_norm = NodeNorm()
         # Graph Neural Network
-        self.rgcn = HeteroRGCN(dict_params['etypes'], dict_params['in_feats'], dict_params['in_feats'],
-                               dict_params['in_feats'], dict_params['feat_drop'], dict_params['attn_drop'], 
+        self.rgcn = HeteroRGCN(dict_params['in_feats'], dict_params['in_feats'],
+                               dict_params['out_feats'], dict_params['feat_drop'], dict_params['attn_drop'], 
                                dict_params['residual'])
         ## node classification
         ### ent node
@@ -552,7 +547,7 @@ class HGNModel(BertPreTrainedModel):
                                                     nn.Dropout(dict_params['span_drop']),
                                                     nn.Linear(config.hidden_size, 3)) 
         # init weights
-        self.init_weights()
+        
         # params
         self.weight_sent_loss = dict_params['weight_sent_loss']
         self.weight_srl_loss = dict_params['weight_srl_loss']
@@ -560,6 +555,30 @@ class HGNModel(BertPreTrainedModel):
         self.weight_span_loss = dict_params['weight_span_loss']
         self.weight_ans_type_loss = dict_params['weight_ans_type_loss']
     
+    def init_params(self):
+        self.init_weights()
+        nn.init.xavier_normal_(self.sent_classifier[0].weight)
+        nn.init.xavier_normal_(self.sent_classifier[2].weight)
+
+        nn.init.xavier_normal_(self.ent_classifier[0].weight)
+        nn.init.xavier_normal_(self.ent_classifier[2].weight)
+
+        nn.init.xavier_normal_(self.srl_classifier[0].weight)
+        nn.init.xavier_normal_(self.srl_classifier[2].weight)
+
+        nn.init.xavier_normal_(self.answer_type_classifier[0].weight)
+        nn.init.xavier_normal_(self.answer_type_classifier[3].weight)
+
+        nn.init.xavier_normal_(self.qa_outputs[0].weight)
+        nn.init.xavier_normal_(self.qa_outputs[2].weight)
+        
+        nn.init.xavier_normal_(self.gru_aggregation.weight)
+        for param in self.bigru.parameters():
+            if len(param.shape) >= 2:
+                nn.init.orthogonal_(param.data)
+            else:
+                nn.init.normal_(param.data)
+
     def forward(
         self,
         graph=None,
@@ -651,8 +670,9 @@ class HGNModel(BertPreTrainedModel):
         if train:
             sent_emb = graph_emb['sent'][sample_sent_nodes]
             # add skip-connection
-            logits_sent = self.sent_classifier(torch.cat((graph_emb['sent'][sample_sent_nodes],
-                                                          initial_graph_emb['sent'][sample_sent_nodes]), dim=1))
+            query_emb = torch.cat([graph_emb['query'] for i in range(len(sample_sent_nodes))], dim=0)
+            logits_sent = self.sent_classifier(torch.cat((query_emb,
+                                                          graph_emb['sent'][sample_sent_nodes]), dim=1))
             assert not torch.isnan(logits_sent).any() 
             
             # contains the indexes of the srl nodes
@@ -660,8 +680,9 @@ class HGNModel(BertPreTrainedModel):
                 logits_srl = None
                 srl_labels = None
             else:
-                logits_srl = self.srl_classifier(torch.cat((graph_emb['srl'][sample_srl_nodes],
-                                                            initial_graph_emb['srl'][sample_srl_nodes]), dim=1))
+                query_emb = torch.cat([graph_emb['query'] for i in range(len(sample_srl_nodes))], dim=0)
+                logits_srl = self.srl_classifier(torch.cat((query_emb,
+                                                            graph_emb['srl'][sample_srl_nodes]), dim=1))
                 # shape [num_ent_nodes, 2] 
                 assert not torch.isnan(logits_srl).any()
                 srl_labels = graph.nodes['srl'].data['labels'][sample_srl_nodes].to(device)
@@ -672,8 +693,9 @@ class HGNModel(BertPreTrainedModel):
                 logits_ent = None
                 ent_labels = None
             else:
-                logits_ent = self.ent_classifier(torch.cat((graph_emb['ent'][sample_ent_nodes],
-                                                            initial_graph_emb['ent'][sample_ent_nodes]), dim=1))
+                query_emb = torch.cat([graph_emb['query'] for i in range(len(sample_ent_nodes))], dim=0)
+                logits_ent = self.ent_classifier(torch.cat((query_emb,
+                                                            graph_emb['ent'][sample_ent_nodes]), dim=1))
                 # shape [num_ent_nodes, 2] 
                 assert not torch.isnan(logits_ent).any()
                 ent_labels = graph.nodes['ent'].data['labels'][sample_ent_nodes].to(device)
@@ -685,18 +707,21 @@ class HGNModel(BertPreTrainedModel):
         else:
             sent_emb = graph_emb['sent']
             # add skip-connection
-            logits_sent = self.sent_classifier(torch.cat((graph_emb['sent'],
-                                                          initial_graph_emb['sent']), dim=1))
+            query_emb = torch.cat([graph_emb['query'] for i in range(graph_emb['sent'].shape[0])], dim=0)
+            logits_sent = self.sent_classifier(torch.cat((query_emb, 
+                                                          graph_emb['sent']), dim=1))
             assert not torch.isnan(logits_sent).any()
-            logits_srl = self.srl_classifier(torch.cat((graph_emb['srl'],
-                                                        initial_graph_emb['srl']), dim=1))
+            query_emb = torch.cat([graph_emb['query'] for i in range(graph_emb['srl'].shape[0])], dim=0)
+            logits_srl = self.srl_classifier(torch.cat((query_emb,
+                                                        graph_emb['srl']), dim=1))
             # shape [num_ent_nodes, 2] 
             assert not torch.isnan(logits_srl).any()
             logits_ent = None
             ent_labels = None
             if 'ent' in graph.ntypes:
-                logits_ent = self.ent_classifier(torch.cat((graph_emb['ent'],
-                                                            initial_graph_emb['ent']), dim=1))
+                query_emb = torch.cat([graph_emb['query'] for i in range(graph_emb['ent'].shape[0])], dim=0)
+                logits_ent = self.ent_classifier(torch.cat((query_emb,
+                                                            graph_emb['ent']), dim=1))
                 # shape [num_ent_nodes, 2]
                 assert not torch.isnan(logits_ent).any()
                 ent_labels = graph.nodes['ent'].data['labels'].to(device)
@@ -877,8 +902,6 @@ class HGNModel(BertPreTrainedModel):
 
 
 # %%
-
-
 from transformers import AdamW, BertConfig
 
 model = HGNModel.from_pretrained(
@@ -1472,34 +1495,22 @@ class Validation():
         metrics['joint_recall'] += joint_recall
 
 # %%
-dict_ins2dict_doc2pred = dict()
-for ins_idx, ins in enumerate(hotpot_dev):
-    set_golden_docs = set([title for title, _ in ins['supporting_facts']])
-    dict_doc2pred = dict()
-    for doc_idx, (title, doc) in enumerate(ins['context']):
-        if title in set_golden_docs:
-            dict_doc2pred[doc_idx] = 1
-        else:
-            dict_doc2pred[doc_idx] = 0
-    dict_ins2dict_doc2pred[ins_idx] = dict_doc2pred
-
-# %%
 # model = HGNModel.from_pretrained('../../models/ans_type_pred_3_epochs')
 # model.cuda()
 
 # %%
-validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
-                        dev_tensor_input_ids, dev_tensor_attention_masks, 
-                        dev_tensor_token_type_ids,
-                        dev_list_span_idx)
-metrics, pred_json_oracle = validation.do_validation()
+# validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
+#                         dev_tensor_input_ids, dev_tensor_attention_masks, 
+#                         dev_tensor_token_type_ids,
+#                         dev_list_span_idx)
+# metrics, pred_json_oracle = validation.do_validation()
 
 # %%
-metrics
+# metrics
 
 # %%
-with open('../../preds_ans_type_pred_3_epochs_oracle.json', 'w+') as f:
-    json.dump(pred_json_oracle, f)
+# with open('../../preds_ans_type_pred_3_epochs_oracle.json', 'w+') as f:
+#     json.dump(pred_json_oracle, f)
 
 # %%
 # # %%
@@ -1563,13 +1574,13 @@ def record_eval_metric(neptune, metrics):
 
 
 # %%
-model_path = 'models/ans_type_pred_3_epochs'
+model_path = 'models/gat_4_layers_gru'
 
 best_eval_em = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="561 3 epochs", params=PARAMS, upload_source_files=['src/models/GAT_Hierar_Tok_Node_Aggr.py']):
-    neptune.set_property('server', 'nipa')
+with neptune.create_experiment(name="659 + GRU for each gat layer", params=PARAMS, upload_source_files=['src/models/GAT_Hierar_Tok_Node_Aggr.py']):
+    neptune.set_property('server', 'irgpu2')
     neptune.set_property('training_set_path', training_path)
     neptune.set_property('dev_set_path', dev_path)
 
@@ -1641,22 +1652,28 @@ with neptune.create_experiment(name="561 3 epochs", params=PARAMS, upload_source
                 scheduler.step()
                 model.zero_grad()
                 
-                # if (step +1) % 10000 == 0:
-                #     #############################
-                #     ######### Validation ########
-                #     #############################
-                #     validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
-                #                             dev_tensor_input_ids, dev_tensor_attention_masks, 
-                #                             dev_tensor_token_type_ids,
-                #                             dev_list_span_idx)
-                #     metrics = validation.do_validation()
-                #     model.train()
-                #     record_eval_metric(neptune, metrics)
+                if epoch_i == 0 and (step +1) == 10000:
+                    #############################
+                    ######### Validation ########
+                    #############################
+                    validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
+                                            dev_tensor_input_ids, dev_tensor_attention_masks, 
+                                            dev_tensor_token_type_ids,
+                                            dev_list_span_idx)
+                    metrics, pred_json = validation.do_validation()
+                    model.train()
+                    record_eval_metric(neptune, metrics)
 
-                #     curr_em = metrics['ans_em']
-                #     if  curr_em > best_eval_em:
-                #         best_eval_em = curr_em
-                #         model.save_pretrained(model_path) 
+                    curr_em = metrics['ans_em']
+                    if  curr_em > best_eval_em:
+                        best_eval_em = curr_em
+                        model.save_pretrained(model_path) 
+                        with open(os.path.join(model_path, 'output.json'), 'w+') as f:
+                            json.dump(pred_json, f)
+                if epoch_i == 2 and (step +1) % 10000 == 0:
+                    model_path_step = model_path + "/epoch3/step_" + str(step)
+                    os.mkdir(model_path_step)
+                    model.save_pretrained(model_path_step)
             total_train_loss += total_loss.detach().item()
 
             # free-up gpu memory
@@ -1683,7 +1700,7 @@ with neptune.create_experiment(name="561 3 epochs", params=PARAMS, upload_source
                                 dev_tensor_input_ids, dev_tensor_attention_masks, 
                                 dev_tensor_token_type_ids,
                                 dev_list_span_idx)
-        metrics = validation.do_validation()
+        metrics, pred_json = validation.do_validation()
         model.train()
         record_eval_metric(neptune, metrics)
 
@@ -1691,6 +1708,8 @@ with neptune.create_experiment(name="561 3 epochs", params=PARAMS, upload_source
         if  curr_em > best_eval_em:
             best_eval_em = curr_em
             model.save_pretrained(model_path) 
+            with open(os.path.join(model_path, 'output.json'), 'w+') as f:
+                json.dump(pred_json, f)
 
     # Calculate the average loss over all of the batches.
     avg_train_loss = total_train_loss / len(train_dataloader)            

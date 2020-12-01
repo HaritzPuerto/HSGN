@@ -26,10 +26,9 @@ def convert_sae_doc_ret_output2our_input(hotpot):
 
 device = 'cuda'
 data_path = 'data/'
-pretrained_weights = 'bert-large-cased-whole-word-masking'
-#pretrained_weights = 'bert-base-cased'
+pretrained_weights = 'bert-large-uncased-whole-word-masking'
+#pretrained_weights = 'bert-base-uncased'
 model_path = 'models/graph_model'
-doc_retr_model_path = 'models/doc_retrieval'
 
 print("Preprocessing data")
 print("Loading HotpotQA")
