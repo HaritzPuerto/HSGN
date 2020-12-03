@@ -473,9 +473,7 @@ class HGNModel(BertPreTrainedModel):
         for (k,v) in graph_emb.items():
             assert not torch.isnan(v).any()
         # graph_emb shape [num_nodes, in_feats]    
-        sample_sent_nodes = self.sample_sent_nodes(graph)
-        sample_srl_nodes = self.sample_srl_nodes(graph)
-        sample_ent_nodes = self.sample_ent_nodes(graph)
+        
         initial_graph_emb = graph_emb # for skip-connection
         
         # update graph embedding #
@@ -487,9 +485,13 @@ class HGNModel(BertPreTrainedModel):
 
         # classify nodes #
         sent_labels = None
+        srl_labels = None
         ent_labels = None
-        sent_emb = None
+        sent_emb = None        
         if train:
+            sample_sent_nodes = self.sample_sent_nodes(graph)
+            sample_srl_nodes = self.sample_srl_nodes(graph)
+            sample_ent_nodes = self.sample_ent_nodes(graph)
             sent_emb = graph_emb['sent'][sample_sent_nodes]
             # add skip-connection
             query_emb = torch.cat([graph_emb['query'] for i in range(len(sample_sent_nodes))], dim=0)
@@ -522,7 +524,13 @@ class HGNModel(BertPreTrainedModel):
                 # shape [num_sampled_ent_nodes, 1]    
             # shape [num_sampled_sent_nodes, 1]
             
-            
+            # labels to cpu
+            sent_labels = sent_labels.cpu().view(-1)
+            if srl_labels is not None:
+                srl_labels = srl_labels.cpu().view(-1)
+            if ent_labels is not None:
+                ent_labels = ent_labels.cpu().view(-1)
+
         else:
             sent_emb = graph_emb['sent']
             # add skip-connection
@@ -574,13 +582,7 @@ class HGNModel(BertPreTrainedModel):
             probs_ent = F.softmax(logits_ent, dim=1).cpu()
             # shape [num_ent_nodes, 2]
 
-        # labels to cpu
-        sent_labels = sent_labels.cpu().view(-1)
-        if srl_labels is not None:
-            srl_labels = srl_labels.cpu().view(-1)
-        if ent_labels is not None:
-            ent_labels = ent_labels.cpu().view(-1)
-
+        
         return ({'sent': {'loss': 0, 'probs': probs_sent, 'logits': logits_sent, 
                           'emb': sent_emb, 'lbl': sent_labels},
                 'srl': {'loss': 0, 'probs': probs_srl, 'lbl': srl_labels},
