@@ -649,7 +649,7 @@ class Dataset():
                         list_srl_st_end_idx.append((st_tok_idx, end_tok_idx))
                         #list_node_type.append(node_type2idx['srl'])
                         # srl_lbl = self.srl_with_ans(arg_str, ans_detokenized, sent_lbl)
-                        list_srl_lbl.append(srl_lbl)
+                        # list_srl_lbl.append(srl_lbl)
                         # ent node
                         current_srl_node = srl_node_idx
                         srl_node_idx += 1
@@ -809,15 +809,15 @@ class Dataset():
 #         graph.nodes['srl']['list_context_idx'] = torch.tensor(list_srl_context_idx).reshape(-1,1)
         # graph.nodes['srl'].data['labels'] = torch.tensor(list_srl_lbl).view(-1,1)
         # srl_loc metadata
-        if list_srl_loc2srl != []:
+        if 'srl_loc' in graph.ntypes:
             graph.nodes['srl_loc'].data['st_end_idx'] =  torch.tensor(list_srl_loc_st_end_idx)
 #             graph.nodes['srl_loc']['list_context_idx'] = torch.tensor(list_srl_loc_context_idx).reshape(-1,1)
         # srl_tmp metadata
-        if list_srl_tmp2srl != []:
+        if 'srl_tmp' in graph.ntypes:
             graph.nodes['srl_tmp'].data['st_end_idx'] =  torch.tensor(list_srl_tmp_st_end_idx)
 #             graph.nodes['srl_tmp']['list_context_idx'] = torch.tensor(list_srl_tmp_context_idx).reshape(-1,1) 
         # ent metadata
-        if list_ent_lbl != []:
+        if 'ent' in graph.ntypes:
             graph.nodes['ent'].data['st_end_idx'] =  torch.tensor(list_ent_st_end_idx)
     #         graph.nodes['ent']['list_context_idx'] = torch.tensor(list_ent_context_idx).reshape(-1,1)
             # graph.nodes['ent'].data['labels'] = torch.tensor(list_ent_lbl).view(-1,1)
