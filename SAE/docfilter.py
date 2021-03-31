@@ -89,7 +89,7 @@ def sample_accuracy_and_recall(out, docs):
     num_docs = docs.size(1) 
     #labels=labels.reshape(-1,num_docs,num_docs)
     out=out.reshape(-1, num_docs, num_docs)
-    print(out.shape)
+    # print(out.shape)
     out[out>0.5]=1
     out[out<=0.5]=0
     #truth = np.sum(labels, axis=-1)
@@ -131,7 +131,7 @@ for i in range(len(distributed_models)):
     model.eval()
     results=[]
     eval_acc, eval_recall, num_examples, truth = 0,0,0,[]
-    for batch in eval_dataloader:
+    for batch in tqdm(eval_dataloader):
         batch = tuple(t.to(device) if type(t) == torch.Tensor else t for t in batch )
         inputs = {
             'input_ids':batch[0],
