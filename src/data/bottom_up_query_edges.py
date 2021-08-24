@@ -528,7 +528,6 @@ class Dataset():
                                         lbl = (fuzz.token_set_ratio(ans_detokenized, ent) >= 90)
                                         if (not srl_lbl) and lbl:
                                             srl_lbl = True
-                                            list_lbl[-1] = srl_lbl
                                         # ent node
                                         if ent in dict_ent_str2ent_node:
                                             current_ent_node = dict_ent_str2ent_node[ent]
@@ -709,7 +708,6 @@ class Dataset():
                                 lbl = (fuzz.token_set_ratio(ans_detokenized, ent) >= 90)
                                 if (not srl_lbl) and lbl:
                                     srl_lbl = True
-                                    list_lbl[-1] = srl_lbl
                                 # ent node
                                 if ent in dict_ent_str2ent_node:
                                     current_ent_node = dict_ent_str2ent_node[ent]
