@@ -866,25 +866,25 @@ class Dataset():
         # query metadata
         graph_metadata['query'] = dict()
         graph_metadata['query']['st_end_idx'] =  np.array(list_query_st_end_idx)
-        graph.nodes['sent'].data['st_end_idx'] =  np.array(list_sent_st_end_idx)
-        graph.nodes['sent'].data['labels'] = np.array(list_sent_lbl).reshape(-1,1)
+        #graph.nodes['sent'].data['st_end_idx'] =  np.array(list_sent_st_end_idx)
+        #graph.nodes['sent'].data['labels'] = np.array(list_sent_lbl).reshape(-1,1)
         # srl metadata
-        graph.nodes['srl'].data['st_end_idx'] =  np.array(list_srl_st_end_idx)
-        graph.nodes['srl'].data['labels'] = np.array(list_srl_lbl).reshape(-1,1)
-        if len(list_srl_tmp2srl) > 0:
+        #graph.nodes['srl'].data['st_end_idx'] =  np.array(list_srl_st_end_idx)
+        #graph.nodes['srl'].data['labels'] = np.array(list_srl_lbl).reshape(-1,1)
+        #if len(list_srl_tmp2srl) > 0:
 #             print(current_srl_tmp_node)
 #             print(list_srl_tmp2srl)
 #             print(np.array(list_srl_tmp_st_end_idx).shape)
 #             print("###########")
-            graph.nodes['srl_tmp'].data['st_end_idx'] =  np.array(list_srl_tmp_st_end_idx)
-        if len(list_srl_loc2srl) > 0:
-            graph.nodes['srl_loc'].data['st_end_idx'] =  np.array(list_srl_loc_st_end_idx)
+         #   graph.nodes['srl_tmp'].data['st_end_idx'] =  np.array(list_srl_tmp_st_end_idx)
+        #if len(list_srl_loc2srl) > 0:
+        #    graph.nodes['srl_loc'].data['st_end_idx'] =  np.array(list_srl_loc_st_end_idx)
         # ent metadata
-        graph.nodes['ent'].data['st_end_idx'] =  np.array(list_ent_st_end_idx)
-        graph.nodes['ent'].data['labels'] = np.array(list_ent_lbl).reshape(-1,1)
+        #graph.nodes['ent'].data['st_end_idx'] =  np.array(list_ent_st_end_idx)
+        #graph.nodes['ent'].data['labels'] = np.array(list_ent_lbl).reshape(-1,1)
         # token metadata
-        graph.nodes['tok'].data['st_end_idx'] =  np.array(list_token_st_end_idx)
-        graph.nodes['tok'].data['labels'] = np.array(list_token_lbl).reshape(-1,1)
+        #graph.nodes['tok'].data['st_end_idx'] =  np.array(list_token_st_end_idx)
+        #graph.nodes['tok'].data['labels'] = np.array(list_token_lbl).reshape(-1,1)
         
         return graph, graph_metadata, list_srl_rel, list_ent2ent_metadata, (ans_st_idx, ans_end_idx)
 
