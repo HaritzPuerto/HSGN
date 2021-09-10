@@ -85,8 +85,8 @@ pretrained_weights = 'bert-base-uncased'
 # ## Processing
 
 # %%
-training_path = os.path.join(data_path, "processed/training/heterog_20201115_query_edges_v5_uncased/")
-dev_path = os.path.join(data_path, "processed/dev/heterog_20201115_query_edges_v5_uncased/")
+training_path = os.path.join(data_path, "processed/training/hsgn_2021_fix/")
+dev_path = os.path.join(data_path, "processed/dev/hsgn_2021_fix/")
 
 with open(os.path.join(training_path, 'list_span_idx.p'), 'rb') as f:
     list_span_idx = pickle.load(f)
@@ -1004,23 +1004,23 @@ train_batch_size = 1
 
 
 # %%
-import neptune
-neptune.init(
-    "haritz/srl-pred"
-)
-neptune.set_project('haritz/srl-pred')
-PARAMS = {"num_epoch": epochs, 
-          'lr': lr, 
-          'pretrained_weights': pretrained_weights,
-          'loss_fn': 'crossentropy', 
-          #'validation_size': len(validation_dataloader)*val_batch_size , 
-          'random_seed': random_seed,
-          'total_steps': total_steps, 
-          'training_size': len(train_dataloader)*train_batch_size, 
-          'train_batch_size': train_batch_size,
-          #'val_batch_size': val_batch_size, 
-          'scheduler': 'get_linear_schedule_with_warmup'}
-PARAMS.update(dict_params)
+# import neptune
+# neptune.init(
+#     "haritz/srl-pred"
+# )
+# neptune.set_project('haritz/srl-pred')
+# PARAMS = {"num_epoch": epochs, 
+#           'lr': lr, 
+#           'pretrained_weights': pretrained_weights,
+#           'loss_fn': 'crossentropy', 
+#           #'validation_size': len(validation_dataloader)*val_batch_size , 
+#           'random_seed': random_seed,
+#           'total_steps': total_steps, 
+#           'training_size': len(train_dataloader)*train_batch_size, 
+#           'train_batch_size': train_batch_size,
+#           #'val_batch_size': val_batch_size, 
+#           'scheduler': 'get_linear_schedule_with_warmup'}
+# PARAMS.update(dict_params)
 
 
 # # Training Loop
@@ -1574,146 +1574,118 @@ def record_eval_metric(neptune, metrics):
 
 
 # %%
-model_path = 'models/gat_4_layers_gru'
+model_path = 'models/hsgn_2021_fix'
 
 best_eval_em = 0
 # Measure the total training time for the whole run.
 total_t0 = time.time()
-with neptune.create_experiment(name="659 + GRU for each gat layer", params=PARAMS, upload_source_files=['src/models/GAT_Hierar_Tok_Node_Aggr.py']):
-    neptune.set_property('server', 'irgpu2')
-    neptune.set_property('training_set_path', training_path)
-    neptune.set_property('dev_set_path', dev_path)
+# with neptune.create_experiment(name="2021", params=PARAMS, upload_source_files=['src/models/GAT_Hierar_Tok_Node_Aggr.py']):
+#     neptune.set_property('server', 'irgpu11')
+#     neptune.set_property('training_set_path', training_path)
+#     neptune.set_property('dev_set_path', dev_path)
 
-    # For each epoch...
-    for epoch_i in range(0, epochs):
-        
-        # ========================================
-        #               Training
-        # ========================================
-        
-        # Perform one full pass over the training set.
-        print("")
-        print('======== Epoch {:} / {:} ========'.format(epoch_i + 1, epochs))
-        print('Training...')
+# For each epoch...
+for epoch_i in range(0, epochs):
+    
+    # ========================================
+    #               Training
+    # ========================================
+    
+    # Perform one full pass over the training set.
+    print("")
+    print('======== Epoch {:} / {:} ========'.format(epoch_i + 1, epochs))
+    print('Training...')
 
-        # Measure how long the training epoch takes.
-        t0 = time.time()
-        # Reset the total loss for this epoch.
-        total_train_loss = 0
-        model.train()
-        # in the first epoch we use curriculum learning
-        # in the second epoch we random the input to avoid biases (modifying the weights only for easy questions for a long time)
-        if epoch_i > 0:
-            random.shuffle(list_idx_curriculum_learning)
-        # For each batch of training data...
-        for step, idx in enumerate(tqdm(list_idx_curriculum_learning)):
-            b_graph = list_graphs[idx]
-            neptune.log_metric('step', step)
-            # forward
-            input_ids=tensor_input_ids[idx].unsqueeze(0).to(device)
-            attention_mask=tensor_attention_masks[idx].unsqueeze(0).to(device)
-            token_type_ids=tensor_token_type_ids[idx].unsqueeze(0).to(device) 
-            start_positions=torch.tensor([list_span_idx[idx][0]], device='cuda')
-            end_positions=torch.tensor([list_span_idx[idx][1]], device='cuda')
-            ans_type_lbl = get_ans_type_lbl(hotpot_train[idx])
-            output = model(b_graph,
-                           input_ids=input_ids,
-                           attention_mask=attention_mask,
-                           token_type_ids=token_type_ids, 
-                           start_positions=start_positions,
-                           end_positions=end_positions,
-                           ans_type_label=ans_type_lbl)
+    # Measure how long the training epoch takes.
+    t0 = time.time()
+    # Reset the total loss for this epoch.
+    total_train_loss = 0
+    model.train()
+    # in the first epoch we use curriculum learning
+    # in the second epoch we random the input to avoid biases (modifying the weights only for easy questions for a long time)
+    if epoch_i > 0:
+        random.shuffle(list_idx_curriculum_learning)
+    # For each batch of training data...
+    for step, idx in enumerate(tqdm(list_idx_curriculum_learning)):
+        b_graph = list_graphs[idx]
+        # neptune.log_metric('step', step)
+        # forward
+        input_ids=tensor_input_ids[idx].unsqueeze(0).to(device)
+        attention_mask=tensor_attention_masks[idx].unsqueeze(0).to(device)
+        token_type_ids=tensor_token_type_ids[idx].unsqueeze(0).to(device) 
+        start_positions=torch.tensor([list_span_idx[idx][0]], device='cuda')
+        end_positions=torch.tensor([list_span_idx[idx][1]], device='cuda')
+        ans_type_lbl = get_ans_type_lbl(hotpot_train[idx])
+        output = model(b_graph,
+                        input_ids=input_ids,
+                        attention_mask=attention_mask,
+                        token_type_ids=token_type_ids, 
+                        start_positions=start_positions,
+                        end_positions=end_positions,
+                        ans_type_label=ans_type_lbl)
+        
+        total_loss = output['loss'] / dict_params['accumulation_steps']
+        assert not torch.isnan(total_loss)
+        sent_loss = output['sent']['loss']
+        ent_loss = output['ent']['loss']
+        srl_loss = output['srl']['loss']
+        span_loss = output['span']['loss']
+        ans_type_loss = output['ans_type']['loss']
+        # neptune
+        # neptune.log_metric("total_loss", total_loss.detach().item())
+        # if sent_loss is not None:
+        #     neptune.log_metric("sent_loss", sent_loss.detach().item())
+        # if srl_loss is not None:
+        #     neptune.log_metric("srl_loss", srl_loss.detach().item())
+        # if ent_loss is not None:    
+        #     neptune.log_metric("ent_loss", ent_loss.detach().item())
+        # if span_loss is not None:
+        #     neptune.log_metric("span_loss", span_loss.detach().item())
+        # if ans_type_loss is not None:
+        #     neptune.log_metric("ans_type_loss", ans_type_loss.detach().item())
+
+        # backpropagation
+        total_loss.backward()
+        if (step + 1) % dict_params['accumulation_steps'] == 0:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            optimizer.step()
+            scheduler.step()
+            model.zero_grad()
             
-            total_loss = output['loss'] / dict_params['accumulation_steps']
-            assert not torch.isnan(total_loss)
-            sent_loss = output['sent']['loss']
-            ent_loss = output['ent']['loss']
-            srl_loss = output['srl']['loss']
-            span_loss = output['span']['loss']
-            ans_type_loss = output['ans_type']['loss']
-            # neptune
-            neptune.log_metric("total_loss", total_loss.detach().item())
-            if sent_loss is not None:
-                neptune.log_metric("sent_loss", sent_loss.detach().item())
-            if srl_loss is not None:
-                neptune.log_metric("srl_loss", srl_loss.detach().item())
-            if ent_loss is not None:    
-                neptune.log_metric("ent_loss", ent_loss.detach().item())
-            if span_loss is not None:
-                neptune.log_metric("span_loss", span_loss.detach().item())
-            if ans_type_loss is not None:
-                neptune.log_metric("ans_type_loss", ans_type_loss.detach().item())
+            if epoch_i == 0 and (step +1) == 10000:
+                #############################
+                ######### Validation ########
+                #############################
+                validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
+                                        dev_tensor_input_ids, dev_tensor_attention_masks, 
+                                        dev_tensor_token_type_ids,
+                                        dev_list_span_idx)
+                metrics, pred_json = validation.do_validation()
+                model.train()
+                # record_eval_metric(neptune, metrics)
 
-            # backpropagation
-            total_loss.backward()
-            if (step + 1) % dict_params['accumulation_steps'] == 0:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-                optimizer.step()
-                scheduler.step()
-                model.zero_grad()
-                
-                if epoch_i == 0 and (step +1) == 10000:
-                    #############################
-                    ######### Validation ########
-                    #############################
-                    validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
-                                            dev_tensor_input_ids, dev_tensor_attention_masks, 
-                                            dev_tensor_token_type_ids,
-                                            dev_list_span_idx)
-                    metrics, pred_json = validation.do_validation()
-                    model.train()
-                    record_eval_metric(neptune, metrics)
+                curr_em = metrics['ans_em']
+                if  curr_em > best_eval_em:
+                    best_eval_em = curr_em
+                    model.save_pretrained(model_path) 
+                    with open(os.path.join(model_path, 'output.json'), 'w+') as f:
+                        json.dump(pred_json, f)
+            if epoch_i == 2 and (step +1) % 10000 == 0:
+                model_path_step = model_path + "/epoch3/step_" + str(step)
+                os.mkdir(model_path_step)
+                model.save_pretrained(model_path_step)
+        total_train_loss += total_loss.detach().item()
 
-                    curr_em = metrics['ans_em']
-                    if  curr_em > best_eval_em:
-                        best_eval_em = curr_em
-                        model.save_pretrained(model_path) 
-                        with open(os.path.join(model_path, 'output.json'), 'w+') as f:
-                            json.dump(pred_json, f)
-                if epoch_i == 2 and (step +1) % 10000 == 0:
-                    model_path_step = model_path + "/epoch3/step_" + str(step)
-                    os.mkdir(model_path_step)
-                    model.save_pretrained(model_path_step)
-            total_train_loss += total_loss.detach().item()
-
-            # free-up gpu memory
-            input_ids = input_ids.to('cpu')
-            attention_mask = attention_mask.to('cpu')
-            token_type_ids = token_type_ids.to('cpu')
-            start_positions = start_positions.to('cpu')
-            end_positions = end_positions.to('cpu')
-            
-        # Calculate the average loss over all of the batches.
-        avg_train_loss = total_train_loss / len(train_dataloader)            
+        # free-up gpu memory
+        input_ids = input_ids.to('cpu')
+        attention_mask = attention_mask.to('cpu')
+        token_type_ids = token_type_ids.to('cpu')
+        start_positions = start_positions.to('cpu')
+        end_positions = end_positions.to('cpu')
         
-        # Measure how long this epoch took.
-        training_time = format_time(time.time() - t0)
-
-        print("")
-        print("  Average training loss: {0:.2f}".format(avg_train_loss))
-        print("  Training epoch took: {:}".format(training_time))
-
-        # #############################
-        # ######### Validation ########
-        # #############################
-        validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
-                                dev_tensor_input_ids, dev_tensor_attention_masks, 
-                                dev_tensor_token_type_ids,
-                                dev_list_span_idx)
-        metrics, pred_json = validation.do_validation()
-        model.train()
-        record_eval_metric(neptune, metrics)
-
-        curr_em = metrics['ans_em']
-        if  curr_em > best_eval_em:
-            best_eval_em = curr_em
-            model.save_pretrained(model_path) 
-            with open(os.path.join(model_path, 'output.json'), 'w+') as f:
-                json.dump(pred_json, f)
-
     # Calculate the average loss over all of the batches.
     avg_train_loss = total_train_loss / len(train_dataloader)            
-
+    
     # Measure how long this epoch took.
     training_time = format_time(time.time() - t0)
 
@@ -1721,12 +1693,40 @@ with neptune.create_experiment(name="659 + GRU for each gat layer", params=PARAM
     print("  Average training loss: {0:.2f}".format(avg_train_loss))
     print("  Training epoch took: {:}".format(training_time))
 
-        
-    print("")
-    print("Training complete!")
+    # #############################
+    # ######### Validation ########
+    # #############################
+    validation = Validation(model, hotpot_dev, dev_list_graphs, tokenizer,
+                            dev_tensor_input_ids, dev_tensor_attention_masks, 
+                            dev_tensor_token_type_ids,
+                            dev_list_span_idx)
+    metrics, pred_json = validation.do_validation()
+    model.train()
+    # record_eval_metric(neptune, metrics)
 
-    print("Total training took {:} (h:mm:ss)".format(format_time(time.time()-total_t0)))
-    # create a zip file for the folder of the model
+    curr_em = metrics['ans_em']
+    if  curr_em > best_eval_em:
+        best_eval_em = curr_em
+        model.save_pretrained(model_path) 
+        with open(os.path.join(model_path, 'output.json'), 'w+') as f:
+            json.dump(pred_json, f)
+
+# Calculate the average loss over all of the batches.
+avg_train_loss = total_train_loss / len(train_dataloader)            
+
+# Measure how long this epoch took.
+training_time = format_time(time.time() - t0)
+
+print("")
+print("  Average training loss: {0:.2f}".format(avg_train_loss))
+print("  Training epoch took: {:}".format(training_time))
+
+    
+print("")
+print("Training complete!")
+
+print("Total training took {:} (h:mm:ss)".format(format_time(time.time()-total_t0)))
+# create a zip file for the folder of the model
 #     zipdir(model_path, os.path.join(model_path, 'checkpoint.zip'))
 #     # upload the model to neptune
 #     neptune.send_artifact(os.path.join(model_path, 'checkpoint.zip'))
